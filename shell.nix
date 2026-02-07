@@ -14,4 +14,8 @@ pkgs.mkShell {
     xorg.libXrender
     zig
   ];
+
+  shellHook = ''
+    unset ZIG_GLOBAL_CACHE_DIR
+  '';
 }
