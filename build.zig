@@ -12,14 +12,29 @@ pub fn build(b: *std.Build) !void {
     const raylib = raylib_dep.module("raylib");
     const raylib_artifact = raylib_dep.artifact("raylib");
 
+    const logic_sim = b.addModule("logic_sim", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+    });
+
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
+
+    exe_mod.addImport("logic_sim", logic_sim);
     exe_mod.addImport("raylib", raylib);
 
     const run_step = b.step("run", "Run the app");
+    const test_step = b.step("test", "Run tests");
+
+    const mod_tests = b.addTest(.{
+        .root_module = logic_sim,
+    });
+
+    const run_mod_tests = b.addRunArtifact(mod_tests);
+    test_step.dependOn(&run_mod_tests.step);
 
     if (target.query.os_tag == .emscripten) {
         const emsdk = rlz.emsdk;
@@ -62,5 +77,12 @@ pub fn build(b: *std.Build) !void {
         run_cmd.step.dependOn(b.getInstallStep());
 
         run_step.dependOn(&run_cmd.step);
+
+        const exe_tests = b.addTest(.{
+            .root_module = exe.root_module,
+        });
+
+        const run_exe_tests = b.addRunArtifact(exe_tests);
+        test_step.dependOn(&run_exe_tests.step);
     }
 }
