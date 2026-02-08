@@ -353,11 +353,12 @@ fn notFunc(input: *const ArrayList(bool), output: *ArrayList(bool)) void {
 }
 
 pub fn main() anyerror!void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const alloc = gpa.allocator();
+    const alloc: Allocator = std.heap.c_allocator;
 
-    rl.setConfigFlags(.{ .msaa_4x_hint = true, .window_highdpi = true });
+    rl.setConfigFlags(.{
+        .msaa_4x_hint = true,
+    });
+
     rl.initWindow(screenWidth, screenHeight, "Logic Simulator");
     defer rl.closeWindow();
 
