@@ -262,7 +262,7 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
         pub const Slot = union(enum) {
             vacant,
             occupied: struct {
-                gen: usize,
+                gen: u64,
                 data: T,
             },
         };
