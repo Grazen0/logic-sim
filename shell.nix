@@ -12,6 +12,7 @@ pkgs.mkShell {
     xorg.libXinerama
     xorg.libXrandr
     xorg.libXrender
+    python3 # Apparently needed to build for web
     zig
   ];
 
