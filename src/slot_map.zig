@@ -21,7 +21,7 @@ pub fn SlotMap(comptime T: type) type {
             gen: u64, // even = vacant, odd = occupied
             contents: union {
                 data: T,
-                next_free: ?usize,
+                next_free: usize,
             },
 
             inline fn isOccupied(self: *const @This()) bool {
@@ -30,7 +30,7 @@ pub fn SlotMap(comptime T: type) type {
         };
 
         slots: ArrayList(Slot),
-        first_free: ?usize,
+        first_free: usize,
         size: usize,
 
         fn Iter(comptime S: type, comptime V: type) type {
@@ -91,32 +91,33 @@ pub fn SlotMap(comptime T: type) type {
 
         pub const empty: Self = .{
             .slots = .empty,
-            .first_free = null,
+            .first_free = 0,
             .size = 0,
         };
 
         pub fn initCapacity(gpa: Allocator, num: usize) Self {
             return .{
                 .slots = .initCapacity(gpa, num),
-                .first_free = null,
+                .first_free = 0,
                 .size = 0,
             };
         }
 
         pub fn deinit(self: *Self, gpa: Allocator) void {
             self.slots.deinit(gpa);
-            self.first_free = null;
+            self.first_free = 0;
             self.size = 0;
         }
 
         pub fn put(self: *Self, gpa: Allocator, value: T) error{OutOfMemory}!Key {
-            const slot_idx = self.first_free orelse blk: {
+            const slot_idx = self.first_free;
+
+            if (slot_idx == self.slots.items.len) {
                 try self.slots.append(gpa, .{
                     .gen = 0,
-                    .contents = .{ .next_free = null },
+                    .contents = .{ .next_free = slot_idx + 1 },
                 });
-                break :blk self.slots.items.len - 1;
-            };
+            }
 
             const slot = &self.slots.items[slot_idx];
 
