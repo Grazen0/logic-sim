@@ -105,8 +105,7 @@ pub fn SlotMap(comptime T: type) type {
 
         pub fn deinit(self: *Self, gpa: Allocator) void {
             self.slots.deinit(gpa);
-            self.first_free = 0;
-            self.size = 0;
+            self.* = undefined;
         }
 
         pub fn put(self: *Self, gpa: Allocator, value: T) error{OutOfMemory}!Key {
@@ -337,7 +336,7 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
 
         pub fn deinit(self: *Self, gpa: Allocator) void {
             self.slots.deinit(gpa);
-            self.size = 0;
+            self.* = undefined;
         }
 
         pub fn put(self: *Self, gpa: Allocator, key: K, value: T) error{OutOfMemory}!?T {
