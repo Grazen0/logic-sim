@@ -41,7 +41,7 @@ pub fn main() anyerror!void {
         .msaa_4x_hint = true,
     });
 
-    rl.initWindow(globals.screenWidth, globals.screenHeight, "Logic Simulator");
+    rl.initWindow(globals.screen_width, globals.screen_height, "Logic Simulator");
     defer rl.closeWindow();
 
     rl.setExitKey(.null);

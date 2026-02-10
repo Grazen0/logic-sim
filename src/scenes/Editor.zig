@@ -18,9 +18,9 @@ const ModuleInstance = sim.ModuleInstance;
 
 const colors = globals.colors;
 
-const wireThickness = 5;
-const portRadius = 12;
-const topPortRadius = 20;
+const wire_thickness = 5;
+const port_Radius = 12;
+const top_port_radius = 20;
 
 const DragInfo = union(enum) {
     none,
@@ -97,18 +97,18 @@ fn draw(self: *Self, mouse: Vector2) !void {
         const wire_value = self.top.readWireSrc(wire.from).?;
         const from_pos = getWireSrcPos(&self.ctx.modules, top_mod, &wire.from);
         const to_pos = getWireDestPos(&self.ctx.modules, top_mod, &wire.to);
-        rl.drawLineEx(from_pos, to_pos, wireThickness, logicColor(wire_value));
+        rl.drawLineEx(from_pos, to_pos, wire_thickness, logicColor(wire_value));
     }
 
     switch (self.drag) {
         .wire_from => |from| {
             const from_value = self.top.readWireSrc(from).?;
             const from_pos = getWireSrcPos(&self.ctx.modules, top_mod, &from);
-            rl.drawLineEx(from_pos, mouse, wireThickness, logicColor(from_value));
+            rl.drawLineEx(from_pos, mouse, wire_thickness, logicColor(from_value));
         },
         .wire_to => |to| {
             const to_pos = getWireDestPos(&self.ctx.modules, top_mod, &to);
-            rl.drawLineEx(mouse, to_pos, wireThickness, logicColor(false));
+            rl.drawLineEx(mouse, to_pos, wire_thickness, logicColor(false));
         },
         else => {},
     }
@@ -116,13 +116,13 @@ fn draw(self: *Self, mouse: Vector2) !void {
     for (0..top_mod.input_cnt) |i| {
         const value = self.top.inputs.items[i];
         const pos = topInputPos(top_mod.input_cnt, i);
-        rl.drawCircleV(pos, topPortRadius, logicColor(value));
+        rl.drawCircleV(pos, top_port_radius, logicColor(value));
     }
 
     for (0..top_mod.output_cnt) |i| {
         const value = self.top.outputs.items[i];
         const pos = topOutputPos(top_mod.output_cnt, i);
-        rl.drawCircleV(pos, topPortRadius, logicColor(value));
+        rl.drawCircleV(pos, top_port_radius, logicColor(value));
     }
 
     var child_iter = top_mod.body.custom.children.iterator();
@@ -134,13 +134,13 @@ fn draw(self: *Self, mouse: Vector2) !void {
         rl.drawRectangleV(child.pos, mod.size, mod.color);
 
         for (0..mod.input_cnt) |i|
-            rl.drawCircleV(inputPos(mod, child.pos, i), portRadius, colors.port);
+            rl.drawCircleV(inputPos(mod, child.pos, i), port_Radius, colors.port);
 
         for (0..mod.output_cnt) |i|
-            rl.drawCircleV(outputPos(mod, child.pos, i), portRadius, colors.port);
+            rl.drawCircleV(outputPos(mod, child.pos, i), port_Radius, colors.port);
 
         const font = try rl.getFontDefault();
-        const text_size = rl.measureTextEx(font, mod.name, globals.fontSize, globals.fontSpacing);
+        const text_size = rl.measureTextEx(font, mod.name, globals.font_size, globals.font_spacing);
 
         rl.drawTextEx(
             font,
@@ -149,8 +149,8 @@ fn draw(self: *Self, mouse: Vector2) !void {
                 child.pos.x + (mod.size.x / 2) - (text_size.x / 2),
                 child.pos.y + (mod.size.y / 2) - (text_size.y / 2),
             ),
-            globals.fontSize,
-            globals.fontSpacing,
+            globals.font_size,
+            globals.font_spacing,
             colors.text,
         );
     }
@@ -212,14 +212,14 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
     for (0..top_mod.input_cnt) |input| {
         const input_pos = topInputPos(top_mod.input_cnt, input);
 
-        if (mouse.distance(input_pos) <= topPortRadius)
+        if (mouse.distance(input_pos) <= top_port_radius)
             return .{ .top_input = input };
     }
 
     for (0..top_mod.output_cnt) |output| {
         const output_pos = topOutputPos(top_mod.output_cnt, output);
 
-        if (mouse.distance(output_pos) <= topPortRadius)
+        if (mouse.distance(output_pos) <= top_port_radius)
             return .{ .top_output = output };
     }
 
@@ -232,14 +232,14 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
         for (0..child_mod.input_cnt) |input| {
             const input_pos = inputPos(child_mod, child.pos, input);
 
-            if (mouse.distance(input_pos) <= portRadius)
+            if (mouse.distance(input_pos) <= port_Radius)
                 return .{ .mod_input = .{ .child_key = entry.key, .input = input } };
         }
 
         for (0..child_mod.output_cnt) |output| {
             const output_pos = outputPos(child_mod, child.pos, output);
 
-            if (mouse.distance(output_pos) <= portRadius)
+            if (mouse.distance(output_pos) <= port_Radius)
                 return .{ .mod_output = .{ .child_key = entry.key, .output = output } };
         }
 
@@ -255,28 +255,28 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
 fn inputPos(module: *const Module, base_pos: Vector2, idx: usize) Vector2 {
     return .init(
         base_pos.x,
-        base_pos.y - portRadius + math.interpolate(module.input_cnt, idx, module.size.y + (2 * portRadius)),
+        base_pos.y - port_Radius + math.interpolate(module.input_cnt, idx, module.size.y + (2 * port_Radius)),
     );
 }
 
 fn outputPos(module: *const Module, base_pos: Vector2, idx: usize) Vector2 {
     return .init(
         base_pos.x + module.size.x,
-        base_pos.y - portRadius + math.interpolate(module.output_cnt, idx, module.size.y + (2 * portRadius)),
+        base_pos.y - port_Radius + math.interpolate(module.output_cnt, idx, module.size.y + (2 * port_Radius)),
     );
 }
 
 fn topInputPos(input_cnt: usize, input: usize) Vector2 {
     return .init(
-        2 * topPortRadius,
-        math.interpolate(input_cnt, input, globals.screenHeight),
+        2 * top_port_radius,
+        math.interpolate(input_cnt, input, globals.screen_height),
     );
 }
 
 fn topOutputPos(output_cnt: usize, input: usize) Vector2 {
     return .init(
-        globals.screenWidth - (2 * topPortRadius),
-        math.interpolate(output_cnt, input, globals.screenHeight),
+        globals.screen_width - (2 * top_port_radius),
+        math.interpolate(output_cnt, input, globals.screen_height),
     );
 }
 

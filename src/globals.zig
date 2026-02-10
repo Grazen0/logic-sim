@@ -3,11 +3,11 @@ const rl = @import("raylib");
 const Color = rl.Color;
 const Vector2 = rl.Vector2;
 
-pub const screenWidth = 1280;
-pub const screenHeight = 720;
-pub const screenSize: Vector2 = .init(screenWidth, screenHeight);
-pub const fontSize = 30;
-pub const fontSpacing = fontSize * 0.1;
+pub const screen_width = 1280;
+pub const screen_height = 720;
+pub const screen_size: Vector2 = .init(screen_width, screen_height);
+pub const font_size = 30;
+pub const font_spacing = font_size * 0.1;
 
 pub const Colorscheme = struct {
     background: Color,

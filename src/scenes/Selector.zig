@@ -56,7 +56,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     re.drawTextAligned(
         font,
         "Logic Simulator",
-        .init(globals.screenWidth / 2, 80),
+        .init(globals.screen_width / 2, 80),
         60,
         60 * 0.1,
         colors.text,
@@ -67,8 +67,8 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     if (self.new_mod_dialog)
         rg.lock();
 
-    const leftNavPos: Rectangle = .init(10, (globals.screenHeight / 2) - (navBtnSize.y / 2), navBtnSize.x, navBtnSize.y);
-    const rightNavPos: Rectangle = .init(globals.screenWidth - navBtnSize.x - 10, (globals.screenHeight / 2) - (navBtnSize.y / 2), navBtnSize.x, navBtnSize.y);
+    const leftNavPos: Rectangle = .init(10, (globals.screen_height / 2) - (navBtnSize.y / 2), navBtnSize.x, navBtnSize.y);
+    const rightNavPos: Rectangle = .init(globals.screen_width - navBtnSize.x - 10, (globals.screen_height / 2) - (navBtnSize.y / 2), navBtnSize.x, navBtnSize.y);
 
     if (self.page > 0 and rg.button(leftNavPos, "#118#"))
         self.page -= 1;
@@ -79,7 +79,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     rg.enable();
 
     const gridWidth = pageCols * (btnSize + btnSpacing) - btnSpacing;
-    const gridX = (globals.screenWidth / 2) - (gridWidth / 2);
+    const gridX = (globals.screen_width / 2) - (gridWidth / 2);
     const gridY = leftNavPos.y;
 
     for (0..pageSize) |pi| {
@@ -118,13 +118,13 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         rl.drawRectangle(
             0,
             0,
-            globals.screenWidth,
-            globals.screenHeight,
+            globals.screen_width,
+            globals.screen_height,
             colors.background.alpha(0.75),
         );
 
         const promptSize: Vector2 = .init(500, 200);
-        const promptPos = globals.screenSize.subtract(promptSize).divide(.init(2, 2));
+        const promptPos = globals.screen_size.subtract(promptSize).divide(.init(2, 2));
 
         const prompt_result = rg.textInputBox(
             .init(promptPos.x, promptPos.y, promptSize.x, promptSize.y),
