@@ -111,6 +111,19 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         }
     }
 
+    if (self.mod_list.items.len == 0) {
+        re.drawTextAligned(
+            font,
+            "¡Create a new module to begin!",
+            .init(globals.screen_width / 2, globals.screen_height - 100),
+            globals.font_size,
+            globals.font_spacing,
+            colors.text_muted,
+            .center,
+            .bottom,
+        );
+    }
+
     rg.enable();
 
     if (self.new_mod_dialog) {
@@ -142,6 +155,9 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
             1 => try self.confirm_create_module(gpa),
             else => @panic("invalid prompt result"),
         }
+
+        if (rl.isKeyPressed(.caps_lock))
+            self.new_mod_dialog = false;
     }
 }
 
