@@ -2,12 +2,15 @@ const rl = @import("raylib");
 
 const Color = rl.Color;
 const Vector2 = rl.Vector2;
+const KeyboardKey = rl.KeyboardKey;
 
 pub const screen_width = 1280;
 pub const screen_height = 720;
 pub const screen_size: Vector2 = .init(screen_width, screen_height);
 pub const font_size = 30;
 pub const font_spacing = font_size * 0.1;
+
+pub const escape_key: KeyboardKey = .caps_lock; // TODO: set this to escape later
 
 pub const Colorscheme = struct {
     background: Color,

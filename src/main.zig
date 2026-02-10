@@ -55,7 +55,6 @@ pub fn main() anyerror!void {
         .name = try alloc.dupeZ(u8, "and"),
         .input_cnt = 2,
         .output_cnt = 1,
-        .size = .init(120, 60),
         .color = .init(0x7E, 0x9C, 0xD8, 0xFF), // blue
         .body = .{ .primitive = andFunc },
     });
@@ -63,7 +62,6 @@ pub fn main() anyerror!void {
         .name = try alloc.dupeZ(u8, "or"),
         .input_cnt = 2,
         .output_cnt = 1,
-        .size = .init(120, 60),
         .color = .init(0x76, 0x94, 0x6A, 0xFF), // green
         .body = .{ .primitive = orFunc },
     });
@@ -71,7 +69,6 @@ pub fn main() anyerror!void {
         .name = try alloc.dupeZ(u8, "not"),
         .input_cnt = 1,
         .output_cnt = 1,
-        .size = .init(80, 40),
         .color = .init(0xC3, 0x40, 0x43, 0xFF), // red
         .body = .{ .primitive = notFunc },
     });
@@ -79,7 +76,6 @@ pub fn main() anyerror!void {
         .name = try alloc.dupeZ(u8, "nor"),
         .input_cnt = 2,
         .output_cnt = 1,
-        .size = .init(120, 60),
         .color = .init(0x95, 0x7F, 0xB8, 0xFF), // purple
         .body = .{ .primitive = norFunc },
     });

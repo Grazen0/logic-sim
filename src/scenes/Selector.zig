@@ -156,7 +156,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
             else => @panic("invalid prompt result"),
         }
 
-        if (rl.isKeyPressed(.caps_lock))
+        if (rl.isKeyPressed(globals.escape_key))
             self.new_mod_dialog = false;
     }
 }
@@ -176,7 +176,6 @@ fn confirm_create_module(self: *Self, gpa: Allocator) !void {
                 .wires = .empty,
             },
         },
-        .size = .init(200, 100),
         .color = .red,
         .input_cnt = 1,
         .output_cnt = 1,

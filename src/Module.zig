@@ -79,7 +79,6 @@ pub const Wire = struct {
 name: [:0]u8,
 input_cnt: usize,
 output_cnt: usize,
-size: Vector2,
 color: Color,
 body: Body,
 
@@ -87,6 +86,27 @@ pub fn deinit(self: *Self, gpa: Allocator) void {
     gpa.free(self.name);
     self.body.deinit(gpa);
     self.* = undefined;
+}
+
+pub fn dependsOn(modules: *const SlotMap(Self), mod_key: Key, search_key: Key) bool {
+    if (mod_key.equals(search_key))
+        return true;
+
+    const mod = modules.get(mod_key).?;
+
+    switch (mod.body) {
+        .primitive => {},
+        .custom => |*body| {
+            var iter = body.children.iterator();
+
+            while (iter.nextValue()) |child| {
+                if (Self.dependsOn(modules, child.mod_key, search_key))
+                    return true;
+            }
+        },
+    }
+
+    return false;
 }
 
 pub const Body = union(enum) {
