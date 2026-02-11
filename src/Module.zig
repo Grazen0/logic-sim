@@ -12,6 +12,7 @@ const SlotMap = structs.SlotMap;
 
 pub const Key = SlotMap(Self).Key;
 pub const ChildKey = SlotMap(Child).Key;
+pub const WireKey = SlotMap(Wire).Key;
 
 pub const InputKey = struct {
     child_key: ChildKey,
@@ -69,10 +70,15 @@ pub const WireDest = union(enum) {
 
 pub const Wire = struct {
     from: WireSrc,
+    points: ArrayList(Vector2),
     to: WireDest,
 
-    pub fn init(from: WireSrc, to: WireDest) @This() {
-        return .{ .from = from, .to = to };
+    pub fn init(from: WireSrc, to: WireDest, points: ArrayList(Vector2)) @This() {
+        return .{ .from = from, .to = to, .points = points };
+    }
+
+    pub fn deinit(self: *@This(), gpa: Allocator) void {
+        self.points.deinit(gpa);
     }
 };
 
@@ -135,6 +141,10 @@ pub const CustomBody = struct {
     wires: SlotMap(Wire),
 
     pub fn deinit(self: *@This(), gpa: Allocator) void {
+        var wire_iter = self.wires.iterator();
+        while (wire_iter.nextValue()) |wire|
+            wire.deinit(gpa);
+
         self.children.deinit(gpa);
         self.wires.deinit(gpa);
         self.* = undefined;
@@ -144,7 +154,8 @@ pub const CustomBody = struct {
         var iter = self.wires.iterator();
         while (iter.nextValue()) |other_wire| {
             if (wire.to.equals(&other_wire.to)) {
-                other_wire.from = wire.from;
+                other_wire.deinit(gpa);
+                other_wire.* = wire;
                 return;
             }
         }

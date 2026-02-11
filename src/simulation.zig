@@ -25,23 +25,36 @@ pub const ModuleInstance = struct {
             .outputs = .empty,
             .body = switch (mod.body) {
                 .primitive => .primitive,
-                .custom => |*mod_body| blk: {
-                    var inst_children: SecondaryMap(Module.ChildKey, Self) = .empty;
-
-                    var iter = mod_body.children.iterator();
-
-                    while (iter.next()) |entry| {
-                        const child_inst = try Self.fromModule(gpa, modules, entry.val.mod_key);
-                        _ = try inst_children.put(gpa, entry.key, child_inst);
-                    }
-
-                    break :blk .{ .custom = inst_children };
-                },
+                .custom => .{ .custom = .empty },
             },
         };
 
         try out.inputs.appendNTimes(gpa, false, mod.input_cnt);
         try out.outputs.appendNTimes(gpa, false, mod.output_cnt);
+
+        switch (mod.body) {
+            .primitive => {},
+            .custom => |*mod_body| {
+                var iter = mod_body.children.iterator();
+
+                while (iter.next()) |entry| {
+                    const child_inst = try Self.fromModule(gpa, modules, entry.val.mod_key);
+                    _ = try out.body.custom.put(gpa, entry.key, child_inst);
+
+                    for (0..child_inst.outputs.items.len) |output| {
+                        out.propagateLogic(gpa, modules, .{
+                            .mod_output = .{
+                                .child_key = entry.key,
+                                .output = output,
+                            },
+                        }) catch |err| switch (err) {
+                            error.InstanceNotFound => {}, // allowed to happen at this stage
+                            else => return err,
+                        };
+                    }
+                }
+            },
+        }
 
         for (0..mod.input_cnt) |i|
             try out.propagateLogic(gpa, modules, .{ .top_input = i });
@@ -110,6 +123,11 @@ pub const ModuleInstance = struct {
         return child.inputs.items[key.input];
     }
 
+    fn writeChildInput(self: *const Self, key: Module.InputKey, value: bool) error{ChildNotFound}!void {
+        const child = self.body.custom.get(key.child_key) orelse return error.ChildNotFound;
+        child.inputs.items[key.input] = value;
+    }
+
     fn readChildOutput(self: *const Self, key: Module.OutputKey) ?bool {
         const child = self.body.custom.get(key.child_key) orelse return null;
         return child.outputs.items[key.output];
@@ -127,6 +145,13 @@ pub const ModuleInstance = struct {
             .top_output => |i| self.outputs.items[i],
             .mod_input => |key| self.readChildInput(key),
         };
+    }
+
+    pub fn writeWireDest(self: *const Self, dest: Module.WireDest, value: bool) !void {
+        switch (dest) {
+            .top_output => |i| self.outputs.items[i] = value,
+            .mod_input => |key| try self.writeChildInput(key, value),
+        }
     }
 };
 

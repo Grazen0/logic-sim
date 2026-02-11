@@ -158,6 +158,9 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
 
         if (rl.isKeyPressed(globals.escape_key))
             self.new_mod_dialog = false;
+
+        if (rl.isKeyPressed(.enter))
+            try self.confirm_create_module(gpa);
     }
 }
 
@@ -177,8 +180,8 @@ fn confirm_create_module(self: *Self, gpa: Allocator) !void {
             },
         },
         .color = .red,
-        .input_cnt = 1,
-        .output_cnt = 1,
+        .input_cnt = 4,
+        .output_cnt = 4,
     };
 
     const new_mod_key = try self.ctx.modules.put(gpa, new_mod);

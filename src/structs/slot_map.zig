@@ -396,7 +396,7 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
                         return null;
 
                     const prev_data = slot_v.data;
-                    slot.* = .{.vacant};
+                    slot.* = .vacant;
                     return prev_data;
                 },
             }

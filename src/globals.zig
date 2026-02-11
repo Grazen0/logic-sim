@@ -4,6 +4,8 @@ const Color = rl.Color;
 const Vector2 = rl.Vector2;
 const KeyboardKey = rl.KeyboardKey;
 
+pub const epsilon = 1e-9;
+
 pub const screen_width = 1280;
 pub const screen_height = 720;
 pub const screen_size: Vector2 = .init(screen_width, screen_height);
@@ -15,6 +17,7 @@ pub const escape_key: KeyboardKey = .caps_lock; // TODO: set this to escape late
 pub const Colorscheme = struct {
     background: Color,
     background_alt: Color,
+    background_dark: Color,
     text: Color,
     text_muted: Color,
 
@@ -26,6 +29,7 @@ pub const Colorscheme = struct {
 pub const colors: Colorscheme = .{
     .background = .init(0x1F, 0x1F, 0x28, 0xFF),
     .background_alt = .init(0x2A, 0x2A, 0x37, 0xFF),
+    .background_dark = .init(0x16, 0x16, 0x1D, 0xFF),
     .text = .init(0xDC, 0xD7, 0xBA, 0xFF),
     .text_muted = .init(0x54, 0x54, 0x6D, 0xFF),
 
