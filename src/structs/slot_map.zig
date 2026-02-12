@@ -50,11 +50,12 @@ pub fn SlotMap(comptime T: type) type {
                         defer self.idx += 1;
                         const slot = &self.slot_map.slots.items[self.idx];
 
-                        if (slot.isOccupied())
+                        if (slot.isOccupied()) {
                             return .{
                                 .key = .{ .index = self.idx, .gen = slot.gen },
                                 .val = &slot.contents.data,
                             };
+                        }
                     }
 
                     return null;
@@ -88,6 +89,58 @@ pub fn SlotMap(comptime T: type) type {
 
         pub const ConstIterator = Iter(*const Self, *const T);
         pub const Iterator = Iter(*Self, *T);
+
+        pub const ReverseIterator = struct {
+            const SelfIter = @This();
+
+            slot_map: *SlotMap(T),
+            idx: usize,
+
+            pub const Entry = struct {
+                key: Key,
+                val: *T,
+            };
+
+            pub fn next(self: *SelfIter) ?Entry {
+                while (self.idx > 0) {
+                    self.idx -= 1;
+                    const slot = &self.slot_map.slots.items[self.idx];
+
+                    if (slot.isOccupied()) {
+                        return .{
+                            .key = .{ .index = self.idx, .gen = slot.gen },
+                            .val = &slot.contents.data,
+                        };
+                    }
+                }
+
+                return null;
+            }
+
+            pub fn nextKey(self: *SelfIter) ?Key {
+                while (self.idx > 0) {
+                    self.idx -= 1;
+                    const slot = &self.slot_map.slots.items[self.idx];
+
+                    if (slot.isOccupied())
+                        return .{ .index = self.idx, .gen = slot.gen };
+                }
+
+                return null;
+            }
+
+            pub fn nextValue(self: *SelfIter) ?*T {
+                while (self.idx > 0) {
+                    self.idx -= 1;
+                    const slot = &self.slot_map.slots.items[self.idx];
+
+                    if (slot.isOccupied())
+                        return &slot.contents.data;
+                }
+
+                return null;
+            }
+        };
 
         pub const empty: Self = .{
             .slots = .empty,
@@ -160,6 +213,13 @@ pub fn SlotMap(comptime T: type) type {
             return .{
                 .slot_map = self,
                 .idx = 0,
+            };
+        }
+
+        pub fn rev_iterator(self: *Self) ReverseIterator {
+            return .{
+                .slot_map = self,
+                .idx = self.slots.items.len,
             };
         }
 
