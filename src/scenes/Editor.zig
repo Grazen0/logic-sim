@@ -19,6 +19,9 @@ const Color = rl.Color;
 const Font = rl.Font;
 const SlotMap = structs.SlotMap;
 const ModuleInstance = sim.ModuleInstance;
+const Wire = Module.Wire;
+const WireSrc = Module.WireSrc;
+const WireDest = Module.WireDest;
 
 const colors = globals.colors;
 
@@ -44,32 +47,41 @@ const HoverInfo = union(enum) {
     module: Module.ChildKey,
 };
 
+const SettingsState = struct {
+    name: [globals.max_mod_name_size:0]u8,
+    name_edit_mode: bool,
+    color: Color,
+};
+
 ctx: *GameContext,
 top: ModuleInstance,
-mouse_action: ?union(enum) {
+mouse_action: union(enum) {
+    none,
     drag_module: struct {
         child_key: Module.ChildKey,
         offset: Vector2,
     },
-    wire_from: Module.WireSrc,
-    wire_to: Module.WireDest,
+    wire_from: WireSrc,
+    wire_to: WireDest,
 },
 wire_points: ArrayList(Vector2),
 selected_child: ?Module.ChildKey,
 panel_view: Rectangle,
 panel_scroll: Vector2,
 panel_width: f32,
+settings: ?SettingsState,
 
 pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: Module.Key) !Self {
     return .{
         .ctx = ctx,
         .top = try .fromModule(gpa, &ctx.modules, mod_key),
-        .mouse_action = null,
+        .mouse_action = .none,
         .wire_points = .empty,
         .selected_child = null,
         .panel_view = .init(0, 0, 0, 0),
         .panel_scroll = .init(0, 0),
         .panel_width = 0,
+        .settings = null,
     };
 }
 
@@ -80,6 +92,11 @@ pub fn deinit(self: *Self, gpa: Allocator) void {
 }
 
 pub fn frame(self: *Self, gpa: Allocator) !void {
+    rg.unlock();
+
+    if (self.settings != null)
+        rg.lock();
+
     const top_mod = self.topMod();
 
     const mouse = rl.getMousePosition();
@@ -90,8 +107,11 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         else => rl.setMouseCursor(.pointing_hand),
     }
 
+    rl.clearBackground(colors.background);
+    const snapped_mouse = try self.drawSimulation(mouse, hover);
+
     if (rl.isMouseButtonPressed(.left)) {
-        try self.onClick(gpa, hover, mouse);
+        try self.onClick(gpa, hover, mouse, snapped_mouse);
     } else if (rl.isMouseButtonReleased(.left)) {
         self.onUnclick();
     }
@@ -100,39 +120,49 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         self.onRightClick();
 
     if (rl.isKeyPressed(globals.escape_key)) {
-        self.ctx.next_scene = .selector;
-        return;
+        if (self.settings) |*settings| {
+            try self.closeSettings(gpa, settings, false);
+        } else {
+            const dragging_wire = self.mouse_action == .wire_from or self.mouse_action == .wire_to;
+
+            if (dragging_wire) {
+                self.mouse_action = .none;
+            } else {
+                self.ctx.next_scene = .selector;
+                return;
+            }
+        }
     }
 
     if (rl.isKeyPressed(.delete)) {
-        if (self.selected_child) |child_key| {
+        if (self.selected_child) |child_key|
             try self.removeChild(child_key);
-        }
     }
 
-    if (self.mouse_action) |drag| {
-        switch (drag) {
-            .drag_module => |mod_drag| {
-                const dragged_child = top_mod.body.custom.children.get(mod_drag.child_key).?;
-                const dragged_child_mod = self.ctx.modules.get(dragged_child.mod_key).?;
-                const child_size = moduleSize(dragged_child_mod);
+    switch (self.mouse_action) {
+        .drag_module => |drag| {
+            const dragged_child = top_mod.body.custom.children.get(drag.child_key).?;
+            const dragged_child_mod = self.ctx.modules.get(dragged_child.mod_key).?;
+            const child_size = moduleSize(dragged_child_mod);
 
-                dragged_child.pos = mouse.add(mod_drag.offset).clamp(
-                    .init(sim_rect.x, sim_rect.y),
-                    .init(
-                        sim_rect.x + sim_rect.width - child_size.x,
-                        sim_rect.y + sim_rect.height - child_size.y,
-                    ),
-                );
-            },
-            else => {},
-        }
+            dragged_child.pos = mouse.add(drag.offset).clamp(
+                .init(sim_rect.x, sim_rect.y),
+                .init(
+                    sim_rect.x + sim_rect.width - child_size.x,
+                    sim_rect.y + sim_rect.height - child_size.y,
+                ),
+            );
+        },
+        else => {},
     }
 
-    rl.clearBackground(colors.background);
-    try self.drawSimulation(mouse, hover);
     self.drawTopBar();
     try self.drawBottomPanel(gpa);
+
+    if (self.settings) |*settings| {
+        rg.unlock();
+        try self.drawSettingsMenu(gpa, settings);
+    }
 }
 
 fn removeWire(self: *Self, wire_key: Module.WireKey) !void {
@@ -168,31 +198,125 @@ fn removeChild(self: *Self, child_key: Module.ChildKey) !void {
     _ = self.top.body.custom.remove(child_key);
 }
 
+fn drawSettingsMenu(self: *Self, gpa: Allocator, settings: *SettingsState) !void {
+    rl.drawRectangle(0, 0, globals.screen_width, globals.screen_height, colors.dim);
+
+    const rect_size: Vector2 = .init(600, 400);
+    const rect_pos: Vector2 = globals.screen_size.subtract(rect_size).divide(.init(2, 2));
+
+    const win_rect: Rectangle = .init(rect_pos.x, rect_pos.y, rect_size.x, rect_size.y);
+    const result = rg.windowBox(win_rect, "Module settings");
+
+    if (result == 1) {
+        try self.closeSettings(gpa, settings, false);
+        return;
+    }
+
+    const pad = 30;
+    const font = try rl.getFontDefault();
+
+    rl.drawTextEx(font, "Name:", .init(win_rect.x + pad, win_rect.y + 45), 24, 24 * 0.1, colors.text);
+
+    const mod_name_rect: Rectangle = .init(
+        win_rect.x + pad,
+        win_rect.y + 80,
+        win_rect.width - (2 * pad),
+        40,
+    );
+
+    if (rg.textBox(mod_name_rect, &settings.name, 30, settings.name_edit_mode))
+        settings.name_edit_mode = !settings.name_edit_mode;
+
+    rl.drawText(
+        "Color:",
+        @as(i32, @intFromFloat(win_rect.x)) + pad,
+        @as(i32, @intFromFloat(win_rect.y)) + 150,
+        24,
+        colors.text,
+    );
+
+    const color_demo_rect: Rectangle = .init(win_rect.x + pad + 80, win_rect.y + 150, 24, 24);
+    rl.drawRectangleRec(color_demo_rect, settings.color);
+    rl.drawRectangleLinesEx(color_demo_rect, 1, colors.text_muted);
+
+    _ = rg.colorPicker(
+        .init(win_rect.x + pad, win_rect.y + 185, win_rect.width - (2 * pad) - 20, 120),
+        "Color",
+        &settings.color,
+    );
+
+    const save_btn_rect: Rectangle = .init(
+        win_rect.x + pad,
+        win_rect.y + win_rect.height - 50,
+        win_rect.width - (2 * pad),
+        30,
+    );
+
+    if (rg.button(save_btn_rect, "Save") or rl.isKeyPressed(.enter))
+        try self.closeSettings(gpa, settings, true);
+}
+
+fn openSettings(self: *Self) void {
+    const top_mod = self.topMod();
+
+    self.settings = .{
+        .name = undefined,
+        .name_edit_mode = true,
+        .color = top_mod.color,
+    };
+
+    const n = top_mod.name.len + 1;
+    @memcpy(self.settings.?.name[0..n], top_mod.name.ptr[0..n]);
+}
+
+fn closeSettings(self: *Self, gpa: Allocator, settings: *const SettingsState, save: bool) !void {
+    if (save) {
+        const top_mod = self.topMod();
+
+        const strlen = std.mem.len(@as([*:0]const u8, settings.name[0..]));
+        const trimmed = std.mem.trim(u8, settings.name[0..strlen], " ");
+
+        if (trimmed.len == 0)
+            return;
+
+        top_mod.color = settings.color;
+        gpa.free(top_mod.name);
+        top_mod.name = try gpa.dupeZ(u8, trimmed);
+    }
+
+    self.settings = null;
+}
+
 fn drawTopBar(self: *Self) void {
     const top_mod = self.topMod();
 
-    if (rg.labelButton(.init(20, 10, 40, 40), "#114#")) {
+    if (rg.button(.init(15, 10, 40, 40), "#114#"))
         self.ctx.next_scene = .selector;
-    }
-    rl.drawText(top_mod.name, 60, 15, globals.font_size, colors.text);
+
+    if (rg.button(.init(65, 10, 40, 40), "#140#"))
+        self.openSettings();
+
+    rl.drawText(top_mod.name, 125, 15, globals.font_size, colors.text);
 }
 
 fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
-    const btn_spacing = 5;
+    const btn_spacing = 8;
 
-    const panel_height = 60;
+    const panel_height = 65;
     const panel_rect: Rectangle = .init(
-        0,
-        globals.screen_height - panel_height,
-        globals.screen_width,
+        15,
+        globals.screen_height - panel_height - 10,
+        globals.screen_width - 30,
         panel_height,
     );
-    const panel_contents: Rectangle = .init(0, 0, self.panel_width, panel_rect.height - 20);
+    const panel_contents: Rectangle = .init(0, 0, self.panel_width, panel_rect.height - 10);
     const panel_base = Vector2
         .init(panel_rect.x, panel_rect.y)
         .add(.init(panel_contents.x, panel_contents.y));
 
     _ = rg.scrollPanel(panel_rect, null, panel_contents, &self.panel_scroll, &self.panel_view);
+
+    rl.drawRectangleLinesEx(panel_rect, 2, colors.text_muted);
 
     rl.beginScissorMode(
         @intFromFloat(self.panel_view.x),
@@ -259,7 +383,7 @@ fn containsChildWithPos(children: *const SlotMap(Module.Child), pos: Vector2) bo
     return false;
 }
 
-fn drawWire(self: *const Self, wire: *const Module.Wire) void {
+fn drawWire(self: *const Self, wire: *const Wire) void {
     const top_mod = self.topMod();
 
     const wire_value = self.top.readWireSrc(wire.from).?;
@@ -281,10 +405,11 @@ fn drawWireLines(start: Vector2, end: Vector2, points: []Vector2, value: bool) v
 
     rl.drawLineEx(s, end, wire_thick, color);
     rl.drawCircleV(s, wire_thick / 2, color);
+    rl.drawCircleV(end, wire_thick / 2, color);
 }
 
-fn drawSimulation(self: *Self, mouse: Vector2, hover: HoverInfo) !void {
-    rl.drawRectangleLinesEx(sim_rect, 1, colors.text_muted);
+fn drawSimulation(self: *Self, mouse: Vector2, hover: HoverInfo) !Vector2 {
+    rl.drawRectangleLinesEx(sim_rect, 2, colors.text_muted);
 
     rl.beginScissorMode(
         @intFromFloat(sim_rect.x),
@@ -300,20 +425,28 @@ fn drawSimulation(self: *Self, mouse: Vector2, hover: HoverInfo) !void {
     while (wire_iter.nextValue()) |wire|
         self.drawWire(wire);
 
-    if (self.mouse_action) |drag| {
-        switch (drag) {
-            .wire_from => |from| {
-                const from_value = self.top.readWireSrc(from).?;
-                const from_pos = getWireSrcPos(&self.ctx.modules, top_mod, &from);
-                drawWireLines(from_pos, mouse, self.wire_points.items, from_value);
-            },
-            .wire_to => |to| {
-                const to_pos = getWireDestPos(&self.ctx.modules, top_mod, &to);
-                drawWireLines(to_pos, mouse, self.wire_points.items, false);
-            },
-            else => {},
-        }
-    }
+    const snap = rl.isKeyDown(.left_shift);
+
+    const snapped_mouse: Vector2 = switch (self.mouse_action) {
+        .wire_from => |from| blk: {
+            const from_value = self.top.readWireSrc(from).?;
+            const from_pos = getWireSrcPos(&self.ctx.modules, top_mod, &from);
+
+            const last_point = self.wire_points.getLastOrNull() orelse from_pos;
+            const snapped_mouse = if (snap) snapPosition(last_point, mouse) else mouse;
+
+            drawWireLines(from_pos, snapped_mouse, self.wire_points.items, from_value);
+            break :blk snapped_mouse;
+        },
+        .wire_to => |to| blk: {
+            const to_pos = getWireDestPos(&self.ctx.modules, top_mod, &to);
+            const last_point = self.wire_points.getLastOrNull() orelse to_pos;
+            const snapped_mouse = if (snap) snapPosition(last_point, mouse) else mouse;
+            drawWireLines(to_pos, snapped_mouse, self.wire_points.items, false);
+            break :blk snapped_mouse;
+        },
+        else => .init(0, 0),
+    };
 
     for (0..top_mod.input_cnt) |input| {
         const value = self.top.inputs.items[input];
@@ -345,9 +478,11 @@ fn drawSimulation(self: *Self, mouse: Vector2, hover: HoverInfo) !void {
         rl.drawCircleV(btn_pos, top_port_radius_btn, logicColor(value));
     }
 
-    var child_iter = top_mod.body.custom.children.iterator();
+    var child_iter = top_mod.body.custom.children.rev_iterator();
     while (child_iter.nextKey()) |child_key|
         try self.drawChild(child_key, hover);
+
+    return snapped_mouse;
 }
 
 fn drawChild(self: *const Self, child_key: Module.ChildKey, hover: HoverInfo) !void {
@@ -411,95 +546,104 @@ fn drawChild(self: *const Self, child_key: Module.ChildKey, hover: HoverInfo) !v
     );
 }
 
-fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2) !void {
+fn addWire(self: *Self, gpa: Allocator, wire: Wire) !void {
     const top_mod = self.topMod();
 
-    if (self.mouse_action) |drag| {
-        const new_wire: ?Module.Wire = switch (drag) {
-            .drag_module => null,
-            .wire_from => |from| switch (hover) {
-                .mod_input => |info| .init(from, .{ .mod_input = info }, try self.wire_points.clone(gpa)),
-                .top_output_pin => |idx| .init(from, .{ .top_output = idx }, try self.wire_points.clone(gpa)),
-                else => null,
+    try top_mod.body.custom.addWire(gpa, wire);
+    try self.top.propagateLogic(gpa, &self.ctx.modules, wire.from);
+    self.mouse_action = .none;
+}
+
+fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snapped_mouse: Vector2) !void {
+    const top_mod = self.topMod();
+
+    switch (self.mouse_action) {
+        .wire_from => |from| switch (hover) {
+            .mod_input => |info| {
+                const new_wire: Wire = .init(from, .{ .mod_input = info }, try self.wire_points.clone(gpa));
+                try self.addWire(gpa, new_wire);
             },
-            .wire_to => |to| blk: {
-                const points_rev = try self.wire_points.clone(gpa);
-                std.mem.reverse(Vector2, points_rev.items);
-
-                break :blk switch (hover) {
-                    .mod_output => |info| .init(.{ .mod_output = info }, to, points_rev),
-                    .top_input_pin => |idx| .init(.{ .top_input = idx }, to, points_rev),
-                    else => null,
-                };
+            .top_output_pin => |idx| {
+                const new_wire: Wire = .init(from, .{ .top_output = idx }, try self.wire_points.clone(gpa));
+                try self.addWire(gpa, new_wire);
             },
-        };
-
-        if (new_wire) |new_wire_v| {
-            try top_mod.body.custom.addWire(gpa, new_wire_v);
-            try self.top.propagateLogic(gpa, &self.ctx.modules, new_wire_v.from);
-            self.mouse_action = null;
-        } else {
-            try self.wire_points.append(gpa, mouse);
-        }
-        return;
-    }
-
-    self.selected_child = null;
-
-    switch (hover) {
-        .none => {},
-        .top_input_btn => |input| {
-            self.top.inputs.items[input] = !self.top.inputs.items[input];
-            try self.top.propagateLogic(gpa, &self.ctx.modules, .{ .top_input = input });
+            else => try self.wire_points.append(gpa, snapped_mouse),
         },
-        .top_input_pin => |input| {
-            self.mouse_action = .{ .wire_from = .{ .top_input = input } };
-            self.wire_points.clearAndFree(gpa);
-        },
-        .top_output_pin => |output| {
-            self.mouse_action = .{ .wire_to = .{ .top_output = output } };
-            self.wire_points.clearAndFree(gpa);
-        },
-        .module => |child_key| {
-            self.selected_child = child_key;
+        .wire_to => |to| blk: {
+            const points_rev = try self.wire_points.clone(gpa);
+            std.mem.reverse(Vector2, points_rev.items);
 
-            self.mouse_action = .{
-                .drag_module = .{
-                    .child_key = child_key,
-                    .offset = top_mod.body.custom.children.get(child_key).?.pos.subtract(mouse),
+            break :blk switch (hover) {
+                .mod_output => |info| {
+                    const new_wire: Wire = .init(.{ .mod_output = info }, to, points_rev);
+                    try self.addWire(gpa, new_wire);
                 },
+                .top_input_pin => |idx| {
+                    const new_wire: Wire = .init(.{ .top_input = idx }, to, points_rev);
+                    try self.addWire(gpa, new_wire);
+                },
+                else => try self.wire_points.append(gpa, snapped_mouse),
             };
         },
-        .mod_input => |info| {
-            self.mouse_action = .{ .wire_to = .{ .mod_input = info } };
-            self.wire_points.clearAndFree(gpa);
-        },
-        .mod_output => |info| {
-            self.mouse_action = .{ .wire_from = .{ .mod_output = info } };
-            self.wire_points.clearAndFree(gpa);
+        .drag_module => {},
+        .none => {
+            self.selected_child = null;
+
+            switch (hover) {
+                .none => {},
+                .top_input_btn => |input| {
+                    self.top.inputs.items[input] = !self.top.inputs.items[input];
+                    try self.top.propagateLogic(gpa, &self.ctx.modules, .{ .top_input = input });
+                },
+                .top_input_pin => |input| {
+                    self.mouse_action = .{ .wire_from = .{ .top_input = input } };
+                    self.wire_points.clearAndFree(gpa);
+                },
+                .top_output_pin => |output| {
+                    self.mouse_action = .{ .wire_to = .{ .top_output = output } };
+                    self.wire_points.clearAndFree(gpa);
+                },
+                .module => |child_key| {
+                    self.selected_child = child_key;
+
+                    self.mouse_action = .{
+                        .drag_module = .{
+                            .child_key = child_key,
+                            .offset = top_mod.body.custom.children.get(child_key).?.pos.subtract(mouse),
+                        },
+                    };
+                },
+                .mod_input => |info| {
+                    self.mouse_action = .{ .wire_to = .{ .mod_input = info } };
+                    self.wire_points.clearAndFree(gpa);
+                },
+                .mod_output => |info| {
+                    self.mouse_action = .{ .wire_from = .{ .mod_output = info } };
+                    self.wire_points.clearAndFree(gpa);
+                },
+            }
         },
     }
 }
 
 fn onRightClick(self: *Self) void {
-    if (self.mouse_action) |drag| {
-        switch (drag) {
-            .wire_from, .wire_to => self.mouse_action = null,
-            else => {},
-        }
+    switch (self.mouse_action) {
+        .wire_from, .wire_to => self.mouse_action = .none,
+        else => {},
     }
 }
 
 fn onUnclick(self: *Self) void {
-    if (self.mouse_action) |drag| {
-        switch (drag) {
-            .drag_module => self.mouse_action = null,
-            else => {},
-        }
+    switch (self.mouse_action) {
+        .drag_module => self.mouse_action = .none,
+        else => {},
     }
 }
 
 fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
+    if (self.settings != null)
+        return .none;
+
     const top_mod = self.topMod();
 
     for (0..top_mod.input_cnt) |input| {
@@ -583,7 +727,7 @@ fn topOutputPosPin(input_cnt: usize, input: usize) Vector2 {
     return topOutputPosBtn(input_cnt, input).subtract(.init(top_port_btn_pin_distance, 0));
 }
 
-fn getWireSrcPos(modules: *const SlotMap(Module), top_mod: *const Module, src: *const Module.WireSrc) Vector2 {
+fn getWireSrcPos(modules: *const SlotMap(Module), top_mod: *const Module, src: *const WireSrc) Vector2 {
     switch (src.*) {
         .top_input => |i| return topInputPosPin(top_mod.input_cnt, i),
         .mod_output => |*key| {
@@ -594,7 +738,7 @@ fn getWireSrcPos(modules: *const SlotMap(Module), top_mod: *const Module, src: *
     }
 }
 
-fn getWireDestPos(modules: *const SlotMap(Module), top_mod: *const Module, dest: *const Module.WireDest) Vector2 {
+fn getWireDestPos(modules: *const SlotMap(Module), top_mod: *const Module, dest: *const WireDest) Vector2 {
     switch (dest.*) {
         .top_output => |i| return topOutputPosPin(top_mod.output_cnt, i),
         .mod_input => |info| {
@@ -618,4 +762,11 @@ fn moduleSize(module: *const Module) Vector2 {
 
 fn topMod(self: *const Self) *Module {
     return self.ctx.modules.get(self.top.mod_key).?;
+}
+
+fn snapPosition(ref: Vector2, pos: Vector2) Vector2 {
+    const dx = @abs(ref.x - pos.x);
+    const dy = @abs(ref.y - pos.y);
+
+    return if (dx < dy) .init(ref.x, pos.y) else .init(pos.x, ref.y);
 }
