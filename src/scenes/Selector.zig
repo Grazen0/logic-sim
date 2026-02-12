@@ -14,21 +14,20 @@ const Rectangle = rl.Rectangle;
 const Vector2 = rl.Vector2;
 const colors = globals.colors;
 
-const btnSize = 120;
-const btnSpacing = 20;
-const navBtnSize: Vector2 = .init(50, ((btnSize + btnSpacing) * pageRows) - btnSpacing);
+const btn_size = 120;
+const btn_spacing = 20;
+const nav_btn_size: Vector2 = .init(50, ((btn_size + btn_spacing) * page_rows) - btn_spacing);
 
-const pageRows = 2;
-const pageCols = 6;
-const pageSize = pageRows * pageCols;
-const maxModNameSize = 32;
+const page_rows = 2;
+const page_cols = 6;
+const page_size = page_rows * page_cols;
 
 ctx: *GameContext,
 mod_list: ArrayList(struct { Module.Key, *const Module }),
 page: usize,
 max_page: usize,
 new_mod_dialog: bool,
-new_mod_name: [maxModNameSize:0]u8,
+new_mod_name: [globals.max_mod_name_size:0]u8,
 
 pub fn init(gpa: Allocator, ctx: *GameContext) !Self {
     var out: Self = .{
@@ -67,8 +66,8 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     if (self.new_mod_dialog)
         rg.lock();
 
-    const leftNavPos: Rectangle = .init(10, (globals.screen_height / 2) - (navBtnSize.y / 2), navBtnSize.x, navBtnSize.y);
-    const rightNavPos: Rectangle = .init(globals.screen_width - navBtnSize.x - 10, (globals.screen_height / 2) - (navBtnSize.y / 2), navBtnSize.x, navBtnSize.y);
+    const leftNavPos: Rectangle = .init(10, (globals.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
+    const rightNavPos: Rectangle = .init(globals.screen_width - nav_btn_size.x - 10, (globals.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
 
     if (self.page > 0 and rg.button(leftNavPos, "#118#"))
         self.page -= 1;
@@ -78,25 +77,25 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
 
     rg.enable();
 
-    const gridWidth = pageCols * (btnSize + btnSpacing) - btnSpacing;
+    const gridWidth = page_cols * (btn_size + btn_spacing) - btn_spacing;
     const gridX = (globals.screen_width / 2) - (gridWidth / 2);
     const gridY = leftNavPos.y;
 
-    for (0..pageSize) |pi| {
-        const idx = (self.page * pageSize) + pi;
+    for (0..page_size) |pi| {
+        const idx = (self.page * page_size) + pi;
         const mod = if (idx < self.mod_list.items.len) self.mod_list.items[idx] else null;
-        const row: f32 = @floatFromInt(pi / pageCols);
-        const col: f32 = @floatFromInt(pi % pageCols);
+        const row: f32 = @floatFromInt(pi / page_cols);
+        const col: f32 = @floatFromInt(pi % page_cols);
 
         const is_add_btn = idx == self.mod_list.items.len;
         re.guiSetEnabled(mod != null or is_add_btn);
 
         const pressed = rg.button(
             .init(
-                gridX + ((btnSize + btnSpacing) * col),
-                gridY + ((btnSize + btnSpacing) * row),
-                btnSize,
-                btnSize,
+                gridX + ((btn_size + btn_spacing) * col),
+                gridY + ((btn_size + btn_spacing) * row),
+                btn_size,
+                btn_size,
             ),
             if (mod) |m| m[1].name else if (is_add_btn) "+" else "",
         );
@@ -128,13 +127,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
 
     if (self.new_mod_dialog) {
         rg.unlock();
-        rl.drawRectangle(
-            0,
-            0,
-            globals.screen_width,
-            globals.screen_height,
-            colors.background.alpha(0.75),
-        );
+        rl.drawRectangle(0, 0, globals.screen_width, globals.screen_height, colors.dim);
 
         const promptSize: Vector2 = .init(500, 200);
         const promptPos = globals.screen_size.subtract(promptSize).divide(.init(2, 2));
@@ -145,7 +138,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
             "Module name:",
             "Create",
             &self.new_mod_name,
-            maxModNameSize,
+            globals.max_mod_name_size,
             null,
         );
 
@@ -200,5 +193,5 @@ fn compute_mod_list(self: *Self, gpa: Allocator) !void {
         }
     }
 
-    self.max_page = self.mod_list.items.len / pageSize;
+    self.max_page = self.mod_list.items.len / page_size;
 }
