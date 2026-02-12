@@ -16,6 +16,7 @@ const Allocator = std.mem.Allocator;
 const Vector2 = rl.Vector2;
 const Rectangle = rl.Rectangle;
 const Color = rl.Color;
+const Font = rl.Font;
 const SlotMap = structs.SlotMap;
 const ModuleInstance = sim.ModuleInstance;
 
@@ -574,5 +575,6 @@ fn logicColor(value: bool) Color {
 fn moduleSize(module: *const Module) Vector2 {
     const ports: f32 = @floatFromInt(@max(module.input_cnt, module.output_cnt));
     const width_extra = 20 * std.math.log2(ports + 1);
-    return .init(60 + width_extra, (ports * (2 * port_radius)) + ((ports + 1) * 4));
+    const min_width: f32 = @floatFromInt(rl.measureText(module.name, globals.font_size));
+    return .init(10 + min_width + width_extra, (ports * (2 * port_radius)) + ((ports + 1) * 4));
 }
