@@ -197,7 +197,9 @@ fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
 
         if (pressed) {
             const top_mod = self.ctx.modules.get(self.top.mod_key).?;
-            var child_pos: Vector2 = .init(globals.screen_width / 2, globals.screen_height / 2);
+            var child_pos: Vector2 = globals.screen_size
+                .subtract(moduleSize(entry.val))
+                .divide(.init(2, 2));
 
             while (containsChildWithPos(&top_mod.body.custom.children, child_pos)) {
                 child_pos = child_pos.addValue(20);
