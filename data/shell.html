@@ -37,14 +37,23 @@
     <link rel="shortcut icon" href="https://www.raylib.com/favicon.ico" />
 
     <style>
+      html {
+        height: 100%;
+      }
       body {
+        min-height: 100%;
         margin: 0px;
         overflow: hidden;
-        background-color: black;
+        background-color: #1f1f28;
+        display: flex;
+        justify-content: center;
+        align-items: center;
       }
       canvas.emscripten {
         border: 0px none;
-        background-color: black;
+        background-color: #1f1f28;
+        max-width: 100%;
+        max-height: 100vh;
       }
     </style>
     <script
