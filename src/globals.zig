@@ -1,8 +1,11 @@
+const builtin = @import("builtin");
 const rl = @import("raylib");
 
 const Color = rl.Color;
 const Vector2 = rl.Vector2;
 const KeyboardKey = rl.KeyboardKey;
+
+pub const web_build = builtin.target.os.tag == .emscripten;
 
 pub const epsilon = 1e-9;
 
@@ -14,7 +17,8 @@ pub const screen_size: Vector2 = .init(screen_width, screen_height);
 pub const font_size = 30;
 pub const font_spacing = font_size * 0.1;
 
-pub const escape_key: KeyboardKey = .caps_lock; // TODO: set this to escape later
+// TODO: find a proper fix for caps:swapescape support
+pub const escape_key: KeyboardKey = if (web_build) .escape else .caps_lock;
 
 pub const Colorscheme = struct {
     background: Color,
