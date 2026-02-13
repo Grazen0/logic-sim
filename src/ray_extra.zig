@@ -4,6 +4,7 @@ const rg = @import("raygui");
 const Color = rl.Color;
 const Font = rl.Font;
 const Vector2 = rl.Vector2;
+const Rectangle = rl.Rectangle;
 
 pub const HorizontalAlignment = enum { left, center, right };
 pub const VerticalAlignment = enum { top, center, bottom };
@@ -48,4 +49,13 @@ pub fn guiSetEnabled(enabled: bool) void {
     } else {
         rg.disable();
     }
+}
+
+pub fn beginScissorModeRec(rect: Rectangle) void {
+    rl.beginScissorMode(
+        @intFromFloat(rect.x),
+        @intFromFloat(rect.y),
+        @intFromFloat(rect.width),
+        @intFromFloat(rect.height),
+    );
 }
