@@ -150,16 +150,18 @@ pub const CustomBody = struct {
         self.* = undefined;
     }
 
-    pub fn addWire(self: *@This(), gpa: Allocator, wire: Wire) !void {
+    pub fn addWire(self: *@This(), gpa: Allocator, wire: Wire) !WireKey {
         var iter = self.wires.iterator();
-        while (iter.nextValue()) |other_wire| {
+        while (iter.next()) |entry| {
+            const other_wire = entry.val;
+
             if (wire.to.equals(&other_wire.to)) {
                 other_wire.deinit(gpa);
                 other_wire.* = wire;
-                return;
+                return entry.key;
             }
         }
 
-        _ = try self.wires.put(gpa, wire);
+        return try self.wires.put(gpa, wire);
     }
 };

@@ -396,8 +396,8 @@ fn drawWire(self: *const Self, wire: *const Wire, highlight: bool) void {
             from_pos,
             to_pos,
             wire.points.items,
-            4 * wire_thick,
-            colors.background_dark.alpha(0.75),
+            3 * wire_thick,
+            Color.black.alpha(0.5),
         );
 
     drawWireLines(from_pos, to_pos, wire.points.items, wire_thick, logicColor(wire_value));
@@ -508,7 +508,7 @@ fn drawChild(self: *const Self, child_key: Module.ChildKey, hover: HoverInfo) !v
             rl.drawRectangleV(
                 child.pos.subtractValue(sel_pad),
                 size.addValue(2 * sel_pad),
-                colors.background_dark.alpha(0.75),
+                Color.black.alpha(0.5),
             );
         },
         else => {},
@@ -559,9 +559,10 @@ fn drawChild(self: *const Self, child_key: Module.ChildKey, hover: HoverInfo) !v
 fn addWire(self: *Self, gpa: Allocator, wire: Wire) !void {
     const top_mod = self.topMod();
 
-    try top_mod.body.custom.addWire(gpa, wire);
+    const new_wire_key = try top_mod.body.custom.addWire(gpa, wire);
     try self.top.propagateLogic(gpa, &self.ctx.modules, wire.from);
     self.mouse_action = .none;
+    self.selection = .{ .wire = new_wire_key };
 }
 
 fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snapped_mouse: Vector2) !void {
