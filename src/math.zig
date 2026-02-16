@@ -33,3 +33,12 @@ pub fn touchesSegment(point: Vector2, seg_a: Vector2, seg_b: Vector2, seg_thick:
 
     return point.x >= x_min and point.x <= x_max and distanceToSegment(point, seg_a, seg_b) < (seg_thick / 2);
 }
+
+pub fn rectPad(rect: Rectangle, padding: f32) Rectangle {
+    return .init(
+        rect.x - padding,
+        rect.y - padding,
+        rect.width + (2 * padding),
+        rect.height + (2 * padding),
+    );
+}

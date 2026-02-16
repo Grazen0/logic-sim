@@ -6,12 +6,13 @@ const rg = @import("raygui");
 const re = @import("../ray_extra.zig");
 const globals = @import("../globals.zig");
 const GameContext = @import("../GameContext.zig");
-const Module = @import("../Module.zig");
+const core = @import("../core.zig");
 
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const Rectangle = rl.Rectangle;
 const Vector2 = rl.Vector2;
+const CustomModule = core.CustomModule;
 const colors = globals.colors;
 
 const btn_size = 120;
@@ -23,7 +24,7 @@ const page_cols = 6;
 const page_size = page_rows * page_cols;
 
 ctx: *GameContext,
-mod_list: ArrayList(struct { Module.Key, *const Module }),
+mod_list: ArrayList(struct { CustomModule.Key, *const CustomModule }),
 page: usize,
 max_page: usize,
 new_mod_dialog: bool,
@@ -39,7 +40,7 @@ pub fn init(gpa: Allocator, ctx: *GameContext) !Self {
         .new_mod_name = undefined,
     };
 
-    try out.compute_mod_list(gpa);
+    try out.computeModList(gpa);
     return out;
 }
 
@@ -66,20 +67,20 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     if (self.new_mod_dialog)
         rg.lock();
 
-    const leftNavPos: Rectangle = .init(10, (globals.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
-    const rightNavPos: Rectangle = .init(globals.screen_width - nav_btn_size.x - 10, (globals.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
+    const left_nav_pos: Rectangle = .init(10, (globals.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
+    const right_nav_pos: Rectangle = .init(globals.screen_width - nav_btn_size.x - 10, (globals.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
 
-    if (self.page > 0 and rg.button(leftNavPos, "#118#"))
+    if (self.page > 0 and rg.button(left_nav_pos, "#118#"))
         self.page -= 1;
 
-    if (self.page < self.max_page and rg.button(rightNavPos, "#119#"))
+    if (self.page < self.max_page and rg.button(right_nav_pos, "#119#"))
         self.page += 1;
 
     rg.enable();
 
-    const gridWidth = page_cols * (btn_size + btn_spacing) - btn_spacing;
-    const gridX = (globals.screen_width / 2) - (gridWidth / 2);
-    const gridY = leftNavPos.y;
+    const grid_width = page_cols * (btn_size + btn_spacing) - btn_spacing;
+    const gridX = (globals.screen_width / 2) - (grid_width / 2);
+    const gridY = left_nav_pos.y;
 
     for (0..page_size) |pi| {
         const idx = (self.page * page_size) + pi;
@@ -129,11 +130,11 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         rg.unlock();
         rl.drawRectangle(0, 0, globals.screen_width, globals.screen_height, colors.dim);
 
-        const promptSize: Vector2 = .init(500, 200);
-        const promptPos = globals.screen_size.subtract(promptSize).divide(.init(2, 2));
+        const prompt_size: Vector2 = .init(500, 200);
+        const prompt_pos = globals.screen_size.subtract(prompt_size).divide(.init(2, 2));
 
         const prompt_result = rg.textInputBox(
-            .init(promptPos.x, promptPos.y, promptSize.x, promptSize.y),
+            .init(prompt_pos.x, prompt_pos.y, prompt_size.x, prompt_size.y),
             "New module",
             "Module name:",
             "Create",
@@ -145,7 +146,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         switch (prompt_result) {
             -1 => {},
             0 => self.new_mod_dialog = false,
-            1 => try self.confirm_create_module(gpa),
+            1 => try self.confirmCreateModule(gpa),
             else => @panic("invalid prompt result"),
         }
 
@@ -153,45 +154,54 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
             self.new_mod_dialog = false;
 
         if (rl.isKeyPressed(.enter))
-            try self.confirm_create_module(gpa);
+            try self.confirmCreateModule(gpa);
     }
 }
 
-fn confirm_create_module(self: *Self, gpa: Allocator) !void {
+// TODO: remove this
+const SlotMap = @import("../structs/structs.zig").SlotMap;
+
+pub fn allocPortSlotMap(comptime T: type, gpa: std.mem.Allocator, port_cnt: usize) !SlotMap(T) {
+    var out: SlotMap(T) = .empty;
+
+    for (0..port_cnt) |i| {
+        _ = try out.put(gpa, .{
+            .name = null,
+            .pos = @import("../math.zig").interpolate(port_cnt, i, 1),
+        });
+    }
+
+    return out;
+}
+
+fn confirmCreateModule(self: *Self, gpa: Allocator) !void {
     const strlen = std.mem.len(@as([*:0]u8, self.new_mod_name[0..]));
     const trimmed = std.mem.trim(u8, self.new_mod_name[0..strlen], " ");
 
     if (trimmed.len == 0)
         return;
 
-    const new_mod: Module = .{
+    const new_mod: CustomModule = .{
         .name = try gpa.dupeZ(u8, trimmed),
-        .body = .{
-            .custom = .{
-                .children = .empty,
-                .wires = .empty,
-            },
-        },
         .color = .red,
-        .input_cnt = 4,
-        .output_cnt = 4,
+        .inputs = try allocPortSlotMap(CustomModule.Input, gpa, 4),
+        .outputs = try allocPortSlotMap(CustomModule.Output, gpa, 4),
+        .children = .empty,
+        .wires = .empty,
     };
 
     const new_mod_key = try self.ctx.modules.put(gpa, new_mod);
     self.ctx.next_scene = .{ .editor = new_mod_key };
 }
 
-fn compute_mod_list(self: *Self, gpa: Allocator) !void {
+fn computeModList(self: *Self, gpa: Allocator) !void {
     var iter = self.ctx.modules.iterator();
 
-    self.mod_list.clearAndFree(gpa);
+    self.mod_list.clearRetainingCapacity();
+    try self.mod_list.ensureTotalCapacity(gpa, self.ctx.modules.size);
 
-    while (iter.next()) |entry| {
-        switch (entry.val.body) {
-            .primitive => {},
-            .custom => try self.mod_list.append(gpa, .{ entry.key, entry.val }),
-        }
-    }
+    while (iter.next()) |entry|
+        try self.mod_list.append(gpa, .{ entry.key, entry.val });
 
     self.max_page = self.mod_list.items.len / page_size;
 }

@@ -148,9 +148,9 @@ pub fn SlotMap(comptime T: type) type {
             .size = 0,
         };
 
-        pub fn initCapacity(gpa: Allocator, num: usize) Self {
+        pub fn initCapacity(gpa: Allocator, num: usize) !Self {
             return .{
-                .slots = .initCapacity(gpa, num),
+                .slots = try .initCapacity(gpa, num),
                 .first_free = 0,
                 .size = 0,
             };
@@ -403,6 +403,12 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
             if (key.index >= self.slots.items.len)
                 try self.slots.appendNTimes(gpa, .vacant, key.index - self.slots.items.len + 1);
 
+            return self.putAssumeCapacity(key, value);
+        }
+
+        pub fn putAssumeCapacity(self: *Self, key: K, value: T) ?T {
+            std.debug.assert(key.index < self.slots.items.len);
+
             const slot = &self.slots.items[key.index];
 
             switch (slot.*) {
@@ -468,6 +474,13 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
 
         pub fn iterator(self: *Self) Iterator {
             return .{ .map = self, .idx = 0 };
+        }
+
+        pub fn clone(self: *const Self, gpa: Allocator) !Self {
+            return .{
+                .slots = try self.slots.clone(gpa),
+                .size = self.size,
+            };
         }
     };
 }

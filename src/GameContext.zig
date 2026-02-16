@@ -1,18 +1,19 @@
 const std = @import("std");
 const structs = @import("./structs/structs.zig");
-const Module = @import("./Module.zig");
+const core = @import("./core.zig");
 
 const Self = @This();
 
 const Allocator = std.mem.Allocator;
 const SlotMap = structs.SlotMap;
+const CustomModule = core.CustomModule;
 
 pub const NextScene = union(enum) {
     selector,
-    editor: Module.Key,
+    editor: CustomModule.Key,
 };
 
-modules: SlotMap(Module),
+modules: SlotMap(CustomModule),
 next_scene: ?NextScene,
 
 pub fn init() Self {
