@@ -53,16 +53,8 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     rl.clearBackground(colors.background);
 
     const font = try rl.getFontDefault();
-    re.drawTextAligned(
-        font,
-        "Logic Simulator",
-        .init(globals.screen_width / 2, 80),
-        60,
-        60 * 0.1,
-        colors.text,
-        .center,
-        .top,
-    );
+    re.drawTextAligned(font, "Logic Simulator", .init(globals.screen_width / 2, 80), 60, 60 * 0.1, colors.text, .center, .top);
+    re.drawTextAligned(font, globals.version_string, globals.screen_size.subtract(.init(20, 10)), 30, 30 * 0.1, colors.text_muted, .right, .bottom);
 
     if (self.new_mod_dialog)
         rg.lock();

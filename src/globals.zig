@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const zon = @import("build.zig.zon");
 const rl = @import("raylib");
 
 const Color = rl.Color;
@@ -7,6 +8,7 @@ const Vector2 = rl.Vector2;
 const KeyboardKey = rl.KeyboardKey;
 
 pub const web_build = builtin.target.os.tag == .emscripten;
+pub const version_string = "v" ++ zon.version;
 
 pub const epsilon = 1e-9;
 pub const epsilon_sqr = std.math.pow(f32, epsilon, 2);

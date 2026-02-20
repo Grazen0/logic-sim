@@ -1,6 +1,8 @@
 const std = @import("std");
 const rlz = @import("raylib_zig");
 
+const build_zig_zon = @embedFile("build.zig.zon");
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -21,6 +23,11 @@ pub fn build(b: *std.Build) !void {
 
     exe_mod.addImport("raylib", raylib);
     exe_mod.addImport("raygui", raygui);
+
+    const zon_module = b.createModule(.{
+        .root_source_file = b.path("build.zig.zon"),
+    });
+    exe_mod.addImport("build.zig.zon", zon_module);
 
     const run_step = b.step("run", "Run the app");
     const test_step = b.step("test", "Run tests");
