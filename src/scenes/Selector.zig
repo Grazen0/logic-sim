@@ -163,6 +163,7 @@ pub fn allocPortSlotMap(comptime T: type, gpa: std.mem.Allocator, port_cnt: usiz
     for (0..port_cnt) |i| {
         _ = try out.put(gpa, .{
             .name = null,
+            .width = 1,
             .pos = @import("../math.zig").interpolate(port_cnt, i, 1),
         });
     }

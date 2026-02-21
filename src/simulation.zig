@@ -13,6 +13,8 @@ const CustomModule = core.CustomModule;
 const WireSrc = CustomModule.WireSrc;
 const WireDest = CustomModule.WireDest;
 
+const assert = std.debug.assert;
+
 fn andOp(a: bool, b: bool) bool {
     return a and b;
 }
@@ -103,6 +105,14 @@ pub const ModuleInstance = union(enum) {
         }
     }
 
+    pub fn readOutput(self: *const Self, output: CustomModule.ChildOutput.O) []const bool {
+        return switch (self.*) {
+            .logic_gate => |*gate_inst| @as(*const [1]bool, @ptrCast(&gate_inst.output)),
+            .not_gate => |*gate_inst| @as(*const [1]bool, @ptrCast(&gate_inst.out)),
+            .custom => |*custom_inst| custom_inst.outputs.get(output.custom).?.*,
+        };
+    }
+
     pub fn update(self: *Self, gpa: Allocator) !void {
         switch (self.*) {
             .logic_gate => |*gate| gate.update(),
@@ -111,12 +121,14 @@ pub const ModuleInstance = union(enum) {
         }
     }
 
-    pub fn writeInputUpdate(self: *Self, gpa: Allocator, input_key: CustomModule.ChildInput.I, value: bool) ![]CustomModule.ChildOutput.O {
+    pub fn writeInputUpdate(self: *Self, gpa: Allocator, input_key: CustomModule.ChildInput.I, values: []const bool) ![]CustomModule.ChildOutput.O {
         var affected_outputs: ArrayList(CustomModule.ChildOutput.O) = .empty;
 
         switch (self.*) {
             .logic_gate => |*gate_inst| {
-                gate_inst.inputs.items[input_key.logic_gate] = value;
+                assert(values.len == 1);
+
+                gate_inst.inputs.items[input_key.logic_gate] = values[0];
 
                 const prev_output = gate_inst.output;
                 gate_inst.update();
@@ -125,30 +137,23 @@ pub const ModuleInstance = union(enum) {
                     try affected_outputs.append(gpa, .logic_gate);
             },
             .not_gate => |*gate_inst| {
-                if (gate_inst.in != value) {
-                    gate_inst.in = value;
-                    gate_inst.out = !value;
+                assert(values.len == 1);
+
+                if (gate_inst.in != values[0]) {
+                    gate_inst.in = values[0];
+                    gate_inst.out = !values[0];
 
                     try affected_outputs.append(gpa, .not_gate);
                 }
             },
             .custom => |*custom_inst| {
-                _ = custom_inst.inputs.putAssumeCapacity(input_key.custom, value);
+                const inputs = custom_inst.inputs.get(input_key.custom).?.*;
+                @memcpy(inputs, values);
 
-                var prev_outputs = try custom_inst.outputs.clone(gpa);
-                defer prev_outputs.deinit(gpa);
+                const sub_affected = try custom_inst.updateFromSrcs(gpa, &.{.{ .top_input = input_key.custom }});
+                defer gpa.free(sub_affected);
 
-                try custom_inst.updateFromSrcs(gpa, &.{.{ .top_input = input_key.custom }});
-
-                var output_iter = prev_outputs.const_iterator();
-                while (output_iter.next()) |entry| {
-                    const output_key = entry.key;
-                    const prev_output = entry.val.*;
-                    const new_output = custom_inst.outputs.get(output_key).?.*;
-
-                    if (prev_output != new_output)
-                        try affected_outputs.append(gpa, .{ .custom = output_key });
-                }
+                try affected_outputs.appendSlice(gpa, sub_affected);
             },
         }
 
@@ -160,8 +165,8 @@ pub const CustomModuleInstance = struct {
     const Self = @This();
 
     mod_key: CustomModule.Key,
-    inputs: SecondaryMap(CustomModule.InputKey, bool),
-    outputs: SecondaryMap(CustomModule.OutputKey, bool),
+    inputs: SecondaryMap(CustomModule.InputKey, []bool),
+    outputs: SecondaryMap(CustomModule.OutputKey, []bool),
     children: SecondaryMap(CustomModule.Child.Key, ModuleInstance),
 
     pub fn fromModuleNoUpdate(gpa: Allocator, mod_key: CustomModule.Key) !Self {
@@ -175,12 +180,18 @@ pub const CustomModuleInstance = struct {
         };
 
         var input_iter = mod.inputs.const_iterator();
-        while (input_iter.nextKey()) |input_key|
-            _ = try out.inputs.put(gpa, input_key, false);
+        while (input_iter.next()) |entry| {
+            const values = try gpa.alloc(bool, entry.val.width);
+            @memset(values, false);
+            _ = try out.inputs.put(gpa, entry.key, values);
+        }
 
         var output_iter = mod.outputs.const_iterator();
-        while (output_iter.nextKey()) |output_key|
-            _ = try out.outputs.put(gpa, output_key, false);
+        while (output_iter.next()) |entry| {
+            const values = try gpa.alloc(bool, entry.val.width);
+            @memset(values, false);
+            _ = try out.outputs.put(gpa, entry.key, values);
+        }
 
         var children_iter = mod.children.const_iterator();
         while (children_iter.next()) |entry| {
@@ -190,7 +201,7 @@ pub const CustomModuleInstance = struct {
             var wire_iter = mod.wires.const_iterator();
             while (wire_iter.nextValue()) |wire| {
                 if (wire.to == .child_input and wire.to.child_input.child_key.equals(entry.key))
-                    try out.updateFromSrcs(gpa, &.{wire.from});
+                    try out.updateFromSrcsVoid(gpa, &.{wire.from});
             }
         }
 
@@ -198,19 +209,28 @@ pub const CustomModuleInstance = struct {
     }
 
     pub fn deinit(self: *Self, gpa: Allocator) void {
-        self.inputs.deinit(gpa);
-        self.outputs.deinit(gpa);
+        var inputs_iter = self.inputs.iterator();
+        while (inputs_iter.nextValue()) |values|
+            gpa.free(values.*);
+
+        var outputs_iter = self.outputs.iterator();
+        while (outputs_iter.nextValue()) |values|
+            gpa.free(values.*);
 
         var children_iter = self.children.iterator();
         while (children_iter.nextValue()) |child|
             child.deinit(gpa);
 
+        self.inputs.deinit(gpa);
+        self.outputs.deinit(gpa);
         self.children.deinit(gpa);
 
         self.* = undefined;
     }
 
-    pub fn updateFromSrcs(self: *Self, gpa: Allocator, srcs: []const WireSrc) error{OutOfMemory}!void {
+    pub fn updateFromSrcs(self: *Self, gpa: Allocator, srcs: []const WireSrc) error{OutOfMemory}![]CustomModule.ChildOutput.O {
+        var affected: ArrayList(CustomModule.ChildOutput.O) = .empty;
+
         const self_mod = globals.modules.get(self.mod_key).?;
 
         var queue: Deque(WireSrc) = .empty;
@@ -220,9 +240,7 @@ pub const CustomModuleInstance = struct {
             try queue.pushBack(gpa, src);
 
         while (queue.popFront()) |src| {
-            // orelse can occur while instantiating a new child on a module
-            // instance that is currently in the middle of initializing.
-            const src_value = self.readWireSrc(src) orelse false;
+            const src_values = self.readWireSrc(src);
 
             var wires_iter = self_mod.wires.const_iterator();
             while (wires_iter.nextValue()) |wire| {
@@ -230,13 +248,19 @@ pub const CustomModuleInstance = struct {
                     continue;
 
                 switch (wire.to) {
-                    .top_output => |key| _ = self.outputs.putAssumeCapacity(key, src_value),
+                    .top_output => |output_key| {
+                        const output = self.outputs.get(output_key).?.*;
+                        if (!std.mem.eql(bool, output, src_values)) {
+                            try affected.append(gpa, .{ .custom = output_key });
+                            @memcpy(output, src_values);
+                        }
+                    },
                     .child_input => |to| {
                         const child_inst = self.children.get(to.child_key).?;
-                        const affected = try child_inst.writeInputUpdate(gpa, to.input, src_value);
-                        defer gpa.free(affected);
+                        const sub_affected = try child_inst.writeInputUpdate(gpa, to.input, src_values);
+                        defer gpa.free(sub_affected);
 
-                        for (affected) |affected_output| {
+                        for (sub_affected) |affected_output| {
                             try queue.pushBack(gpa, .{
                                 .child_output = .{
                                     .child_key = to.child_key,
@@ -248,6 +272,13 @@ pub const CustomModuleInstance = struct {
                 }
             }
         }
+
+        return try affected.toOwnedSlice(gpa);
+    }
+
+    pub fn updateFromSrcsVoid(self: *Self, gpa: Allocator, srcs: []const WireSrc) !void {
+        const affected = try self.updateFromSrcs(gpa, srcs);
+        defer gpa.free(affected);
     }
 
     pub fn update(self: *Self, gpa: Allocator) !void {
@@ -259,43 +290,35 @@ pub const CustomModuleInstance = struct {
         while (input_iter.nextKey()) |input_key| : (i += 1)
             srcs[i] = .{ .top_input = input_key };
 
-        try self.updateFromSrcs(gpa, srcs);
+        try self.updateFromSrcsVoid(gpa, srcs);
     }
 
-    fn writeChildInput(self: *const Self, gpa: Allocator, key: CustomModule.ChildInput, value: bool) ![]CustomModule.ChildOutput.O {
-        const child = self.children.get(key.child_key).?;
-        return try child.writeInputUpdate(gpa, key.input, value);
-    }
-
-    fn readChildOutput(self: *const Self, key: CustomModule.ChildOutput) ?bool {
-        const child = self.children.get(key.child_key) orelse return null;
-
-        return switch (child.*) {
-            .logic_gate => child.logic_gate.output,
-            .not_gate => child.not_gate.out,
-            .custom => child.custom.outputs.get(key.output.custom).?.*,
-        };
-    }
-
-    pub fn readWireSrc(self: *const Self, src: WireSrc) ?bool {
+    pub fn readWireSrc(self: *const Self, src: WireSrc) []const bool {
         return switch (src) {
             .top_input => |input_key| self.inputs.get(input_key).?.*,
-            .child_output => |keys| self.readChildOutput(keys),
+            .child_output => |keys| blk: {
+                const child = self.children.get(keys.child_key).?;
+                break :blk child.readOutput(keys.output);
+            },
         };
     }
 
-    pub fn writeWireDestUpdate(self: *Self, gpa: Allocator, dest: WireDest, value: bool) !void {
+    pub fn writeWireDestUpdate(self: *Self, gpa: Allocator, dest: WireDest, values: []const bool) !void {
         switch (dest) {
-            .top_output => |key| _ = self.outputs.putAssumeCapacity(key, value),
+            .top_output => |output_key| {
+                const dest_values = self.outputs.get(output_key).?.*;
+                @memcpy(dest_values, values);
+            },
             .child_input => |key| {
-                const affected = try self.writeChildInput(gpa, key, value);
+                const child = self.children.get(key.child_key).?;
+                const affected = try child.writeInputUpdate(gpa, key.input, values);
                 defer gpa.free(affected);
 
-                var starts = try gpa.alloc(WireSrc, affected.len);
-                defer gpa.free(starts);
+                var start_srcs = try gpa.alloc(WireSrc, affected.len);
+                defer gpa.free(start_srcs);
 
                 for (0.., affected) |i, output| {
-                    starts[i] = .{
+                    start_srcs[i] = .{
                         .child_output = .{
                             .child_key = key.child_key,
                             .output = output,
@@ -303,7 +326,7 @@ pub const CustomModuleInstance = struct {
                     };
                 }
 
-                try self.updateFromSrcs(gpa, starts);
+                try self.updateFromSrcsVoid(gpa, start_srcs);
             },
         }
     }

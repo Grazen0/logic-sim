@@ -9,6 +9,8 @@ const Vector2 = rl.Vector2;
 const Color = rl.Color;
 const SlotMap = structs.SlotMap;
 
+const assert = std.debug.assert;
+
 pub const Module = union(enum) {
     pub const LogicGate = struct {
         pub const Kind = enum { @"and", nand, @"or", nor, xor };
@@ -129,6 +131,7 @@ pub const CustomModule = struct {
 
     pub const Input = struct {
         name: ?[:0]u8,
+        width: usize,
         pos: f32,
 
         fn deinit(self: *@This(), gpa: Allocator) void {
@@ -141,6 +144,7 @@ pub const CustomModule = struct {
 
     pub const Output = struct {
         name: ?[:0]u8,
+        width: usize,
         pos: f32,
 
         fn deinit(self: *@This(), gpa: Allocator) void {
@@ -159,32 +163,67 @@ pub const CustomModule = struct {
     wires: SlotMap(Wire),
 
     pub fn deinit(self: *Self, gpa: Allocator) void {
-        gpa.free(self.name);
-
         var input_iter = self.inputs.iterator();
         while (input_iter.nextValue()) |input|
             input.deinit(gpa);
-
-        self.inputs.deinit(gpa);
 
         var output_iter = self.outputs.iterator();
         while (output_iter.nextValue()) |output|
             output.deinit(gpa);
 
-        self.outputs.deinit(gpa);
-
-        self.children.deinit(gpa);
-
         var wire_iter = self.wires.iterator();
         while (wire_iter.nextValue()) |wire|
             wire.deinit(gpa);
 
+        gpa.free(self.name);
+        self.inputs.deinit(gpa);
+        self.outputs.deinit(gpa);
+        self.children.deinit(gpa);
         self.wires.deinit(gpa);
 
         self.* = undefined;
     }
 
-    pub fn addWireOrModifyExisting(self: *@This(), gpa: Allocator, wire: Wire) !WireKey {
+    pub fn wireSrcWidth(self: *const Self, src: WireSrc) usize {
+        switch (src) {
+            .top_input => |input_key| return self.inputs.get(input_key).?.width,
+            .child_output => |keys| {
+                const child = self.children.get(keys.child_key).?;
+                return switch (child.mod) {
+                    .logic_gate, .not_gate => return 1,
+                    .custom => |mod_key| {
+                        const mod = globals.modules.get(mod_key).?;
+                        return mod.outputs.get(keys.output.custom).?.width;
+                    },
+                };
+            },
+        }
+    }
+
+    pub fn wireDestWidth(self: *const Self, dest: WireDest) usize {
+        switch (dest) {
+            .top_output => |output_key| return self.outputs.get(output_key).?.width,
+            .child_input => |keys| {
+                const child = self.children.get(keys.child_key).?;
+                switch (child.mod) {
+                    .logic_gate, .not_gate => return 1,
+                    .custom => |mod_key| {
+                        const mod = globals.modules.get(mod_key).?;
+                        return mod.inputs.get(keys.input.custom).?.width;
+                    },
+                }
+            },
+        }
+    }
+
+    pub fn wireWidth(self: *const Self, wire: *const Wire) usize {
+        const src_width = self.wireSrcWidth(wire.from);
+        const dest_width = self.wireDestWidth(wire.to);
+        assert(src_width == dest_width);
+        return src_width;
+    }
+
+    pub fn addWireOrModifyExisting(self: *Self, gpa: Allocator, wire: Wire) !WireKey {
         var iter = self.wires.iterator();
         while (iter.next()) |entry| {
             const other_wire = entry.val;

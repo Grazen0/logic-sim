@@ -151,7 +151,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     }
 
     rl.clearBackground(theme.background);
-    const snapped_mouse = try self.drawSimulation(mouse, hover);
+    const snapped_mouse = try self.drawSimulation(gpa, mouse, hover);
 
     if (rl.isMouseButtonPressed(.left)) {
         try self.onClick(gpa, hover, mouse, snapped_mouse);
@@ -180,7 +180,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     if (rl.isKeyPressed(.delete)) {
         switch (self.selection) {
             .child => |child_key| try self.removeChild(gpa, child_key),
-            .wire => |wire| try self.removeWire(gpa, wire),
+            .wire => |wire_key| try self.removeWire(gpa, wire_key),
             .none => {},
         }
     }
@@ -207,7 +207,14 @@ fn removeWire(self: *Self, gpa: Allocator, wire_key: CustomModule.WireKey) !void
     const top_mod = self.topMod();
     const wire = top_mod.wires.get(wire_key).?;
     _ = top_mod.wires.remove(wire_key);
-    try self.top_inst.writeWireDestUpdate(gpa, wire.to, false);
+
+    const wire_width = top_mod.wireDestWidth(wire.to);
+    const false_values = try gpa.alloc(bool, wire_width);
+    defer gpa.free(false_values);
+
+    @memset(false_values, false);
+
+    try self.top_inst.writeWireDestUpdate(gpa, wire.to, false_values);
 }
 
 fn removeChild(self: *Self, gpa: Allocator, child_key: Child.Key) !void {
@@ -379,7 +386,7 @@ fn addChildModule(self: *Self, gpa: Allocator, child_v: Module) !void {
     const clamp_bounds = childClampBounds(&child);
 
     while (containsChildWithPos(&top_mod.children, child.pos)) {
-        const new_pos = child.pos.add(.init(25, 25)).clamp(clamp_bounds[0], clamp_bounds[1]);
+        const new_pos = child.pos.addValue(25).clamp(clamp_bounds[0], clamp_bounds[1]);
         if (child.pos.equals(new_pos) != 0)
             break;
 
@@ -447,7 +454,7 @@ fn containsChildWithPos(children: *const SlotMap(Child), pos: Vector2) bool {
 }
 
 fn drawWire(self: *const Self, wire: *const Wire, highlight: bool) void {
-    const wire_value = self.top_inst.readWireSrc(wire.from).?;
+    const wire_values = self.top_inst.readWireSrc(wire.from);
     const from_pos = self.wireSrcPos(&wire.from);
     const to_pos = self.wireDestPos(&wire.to);
 
@@ -460,7 +467,7 @@ fn drawWire(self: *const Self, wire: *const Wire, highlight: bool) void {
             theme.selection_border,
         );
 
-    drawWireLines(from_pos, to_pos, wire.points, wire_thick, logicColor(wire_value));
+    drawWireLines(from_pos, to_pos, wire.points, wire_thick, logicColor(wire_values));
 }
 
 fn drawWireLines(start: Vector2, end: Vector2, points: []Vector2, thick: f32, color: Color) void {
@@ -477,7 +484,7 @@ fn drawWireLines(start: Vector2, end: Vector2, points: []Vector2, thick: f32, co
     rl.drawCircleV(end, thick / 2, color);
 }
 
-fn drawSimulation(self: *const Self, mouse: Vector2, hover: HoverInfo) !Vector2 {
+fn drawSimulation(self: *const Self, gpa: Allocator, mouse: Vector2, hover: HoverInfo) !Vector2 {
     rl.drawRectangleLinesEx(sim_rect, 2, theme.text_muted);
 
     re.beginScissorModeRec(sim_rect);
@@ -495,7 +502,7 @@ fn drawSimulation(self: *const Self, mouse: Vector2, hover: HoverInfo) !Vector2 
 
     const snapped_mouse: Vector2 = switch (self.mouse_action) {
         .wire_from => |from| blk: {
-            const from_value = self.top_inst.readWireSrc(from).?;
+            const from_value = self.top_inst.readWireSrc(from);
             const from_pos = self.wireSrcPos(&from);
 
             const last_point = self.wire_points.getLastOrNull() orelse from_pos;
@@ -508,14 +515,17 @@ fn drawSimulation(self: *const Self, mouse: Vector2, hover: HoverInfo) !Vector2 
             const to_pos = self.wireDestPos(&to);
             const last_point = self.wire_points.getLastOrNull() orelse to_pos;
             const snapped_mouse = if (snap) math.snap(last_point, mouse) else mouse;
-            drawWireLines(to_pos, snapped_mouse, self.wire_points.items, wire_thick, logicColor(false));
+            drawWireLines(to_pos, snapped_mouse, self.wire_points.items, wire_thick, logicColor(&.{false}));
             break :blk snapped_mouse;
         },
         else => .init(0, 0),
     };
 
     var input_iter = top_mod.inputs.const_iterator();
-    while (input_iter.nextKey()) |input_key| {
+    while (input_iter.next()) |entry| {
+        const input_key = entry.key;
+        const input = entry.val;
+
         const value = self.top_inst.inputs.get(input_key).?.*;
         const btn_pos = self.topInputBtnPos(input_key);
         const pin_pos = self.topInputPosPin(input_key);
@@ -525,10 +535,19 @@ fn drawSimulation(self: *const Self, mouse: Vector2, hover: HoverInfo) !Vector2 
         rl.drawLineEx(btn_pos, pin_pos, 8, theme.port);
         rl.drawCircleV(pin_pos, top_port_radius_pin, if (highlight) theme.background_alt else theme.port);
         rl.drawCircleV(btn_pos, top_port_radius_btn, logicColor(value));
+
+        const font = rl.getFontDefault() catch unreachable;
+        const width_str = try std.fmt.allocPrintSentinel(gpa, "{d}", .{input.width}, 0);
+        defer gpa.free(width_str);
+
+        re.drawTextAligned(font, width_str, pin_pos, 20, 2, theme.text_muted, .center, .center);
     }
 
     var output_iter = top_mod.outputs.const_iterator();
-    while (output_iter.nextKey()) |output_key| {
+    while (output_iter.next()) |entry| {
+        const output_key = entry.key;
+        const output = entry.val;
+
         const value = self.top_inst.outputs.get(output_key).?.*;
         const btn_pos = self.topOutputPosBtn(output_key);
         const pin_pos = self.topOutputPinPos(output_key);
@@ -538,6 +557,12 @@ fn drawSimulation(self: *const Self, mouse: Vector2, hover: HoverInfo) !Vector2 
         rl.drawLineEx(btn_pos, pin_pos, 8, theme.port);
         rl.drawCircleV(pin_pos, top_port_radius_pin, if (highlight) theme.background_alt else theme.port);
         rl.drawCircleV(btn_pos, top_port_radius_btn, logicColor(value));
+
+        const font = rl.getFontDefault() catch unreachable;
+        const width_str = try std.fmt.allocPrintSentinel(gpa, "{d}", .{output.width}, 0);
+        defer gpa.free(width_str);
+
+        re.drawTextAligned(font, width_str, pin_pos, 20, 2, theme.text_muted, .center, .center);
     }
 
     var child_iter = top_mod.children.const_iterator();
@@ -703,10 +728,14 @@ fn drawChild(self: *const Self, child_key: Child.Key, hover: HoverInfo) void {
 fn addWire(self: *Self, gpa: Allocator, wire: Wire) !void {
     const top_mod = self.topMod();
 
-    const new_wire_key = try top_mod.addWireOrModifyExisting(gpa, wire);
-    try self.top_inst.updateFromSrcs(gpa, &.{wire.from});
+    // Only create wire if port widths match
+    if (top_mod.wireSrcWidth(wire.from) == top_mod.wireDestWidth(wire.to)) {
+        const new_wire_key = try top_mod.addWireOrModifyExisting(gpa, wire);
+        try self.top_inst.updateFromSrcsVoid(gpa, &.{wire.from});
+        self.selection = .{ .wire = new_wire_key };
+    }
+
     self.mouse_action = .none;
-    self.selection = .{ .wire = new_wire_key };
 }
 
 fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snapped_mouse: Vector2) !void {
@@ -748,17 +777,21 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snappe
 
             switch (hover) {
                 .none => {},
-                .top_input_btn => |input| {
-                    const prev_value = self.top_inst.inputs.get(input).?.*;
-                    _ = self.top_inst.inputs.putAssumeCapacity(input, !prev_value);
-                    try self.top_inst.updateFromSrcs(gpa, &.{.{ .top_input = input }});
+                .top_input_btn => |input_key| {
+                    const prev_values = self.top_inst.inputs.get(input_key).?.*;
+                    const dest_values = self.top_inst.inputs.get(input_key).?.*;
+
+                    for (0.., prev_values) |i, v|
+                        dest_values[i] = !v;
+
+                    try self.top_inst.updateFromSrcsVoid(gpa, &.{.{ .top_input = input_key }});
                 },
-                .top_input_pin => |input| {
-                    self.mouse_action = .{ .wire_from = .{ .top_input = input } };
+                .top_input_pin => |input_key| {
+                    self.mouse_action = .{ .wire_from = .{ .top_input = input_key } };
                     self.wire_points.clearAndFree(gpa);
                 },
-                .top_output_pin => |output| {
-                    self.mouse_action = .{ .wire_to = .{ .top_output = output } };
+                .top_output_pin => |output_key| {
+                    self.mouse_action = .{ .wire_to = .{ .top_output = output_key } };
                     self.wire_points.clearAndFree(gpa);
                 },
                 .child => |child_key| {
@@ -1034,8 +1067,8 @@ fn wireDestPos(self: *const Self, dest: *const WireDest) Vector2 {
     }
 }
 
-inline fn logicColor(value: bool) Color {
-    return if (value) theme.logic_on else theme.logic_off;
+inline fn logicColor(values: []const bool) Color {
+    return if (std.mem.allEqual(bool, values, false)) theme.logic_off else theme.logic_on;
 }
 
 inline fn topMod(self: *const Self) *CustomModule {
