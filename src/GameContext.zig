@@ -13,21 +13,10 @@ pub const NextScene = union(enum) {
     editor: CustomModule.Key,
 };
 
-modules: SlotMap(CustomModule),
 next_scene: ?NextScene,
 
 pub fn init() Self {
     return .{
-        .modules = .empty,
         .next_scene = null,
     };
-}
-
-pub fn deinit(self: *Self, gpa: Allocator) void {
-    var iter = self.modules.iterator();
-    while (iter.nextValue()) |mod|
-        mod.deinit(gpa);
-
-    self.modules.deinit(gpa);
-    self.* = undefined;
 }

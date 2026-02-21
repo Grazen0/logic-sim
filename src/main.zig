@@ -7,23 +7,48 @@ const consts = @import("./consts.zig");
 const globals = @import("./globals.zig");
 const GameContext = @import("./GameContext.zig");
 
+const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const SlotMap = structs.SlotMap;
 
 const Scene = union(enum) {
     selector: scenes.Selector,
     editor: scenes.Editor,
+
+    pub fn deinit(self: *@This(), gpa: Allocator) void {
+        switch (self.*) {
+            .selector => |*sel| sel.deinit(gpa),
+            .editor => |*ed| ed.deinit(gpa),
+        }
+
+        self.* = undefined;
+    }
+
+    pub fn frame(self: *@This(), gpa: Allocator) !void {
+        switch (self.*) {
+            .selector => |*sel| try sel.frame(gpa),
+            .editor => |*ed| try ed.frame(gpa),
+        }
+    }
 };
 
 pub fn main() anyerror!void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     const alloc = if (consts.web_build) std.heap.c_allocator else gpa.allocator();
     defer std.debug.assert(!gpa.detectLeaks());
+
+    defer {
+        var iter = globals.modules.iterator();
+        while (iter.nextValue()) |mod|
+            mod.deinit(alloc);
+
+        globals.modules.deinit(alloc);
+    }
+
     rl.setConfigFlags(.{
         .msaa_4x_hint = true,
     });
-
-    rl.initWindow(globals.screen_width, globals.screen_height, "Logic Simulator");
+    rl.initWindow(consts.screen_width, consts.screen_height, "Logic Simulator");
     defer rl.closeWindow();
 
     rl.setExitKey(.null);
@@ -31,26 +56,19 @@ pub fn main() anyerror!void {
     rl.setTargetFPS(60);
 
     var ctx: GameContext = .init();
-    defer ctx.deinit(alloc);
 
     var cur_scene: Scene = .{ .selector = try .init(alloc, &ctx) };
+    defer cur_scene.deinit(alloc);
 
     while (!rl.windowShouldClose()) {
         rl.beginDrawing();
         defer rl.endDrawing();
 
         ctx.next_scene = null;
-
-        switch (cur_scene) {
-            .selector => |*sel| try sel.frame(alloc),
-            .editor => |*ed| try ed.frame(alloc),
-        }
+        try cur_scene.frame(alloc);
 
         if (ctx.next_scene) |next_scene| {
-            switch (cur_scene) {
-                .selector => |*sel| sel.deinit(alloc),
-                .editor => |*ed| ed.deinit(alloc),
-            }
+            cur_scene.deinit(alloc);
 
             cur_scene = switch (next_scene) {
                 .selector => .{ .selector = try .init(alloc, &ctx) },

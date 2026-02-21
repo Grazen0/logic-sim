@@ -59,3 +59,19 @@ pub fn beginScissorModeRec(rect: Rectangle) void {
         @intFromFloat(rect.height),
     );
 }
+
+pub fn rectPad(rect: Rectangle, padding: f32) Rectangle {
+    return .init(
+        rect.x - padding,
+        rect.y - padding,
+        rect.width + (2 * padding),
+        rect.height + (2 * padding),
+    );
+}
+
+pub fn rectCenter(rect: Rectangle) Vector2 {
+    return .init(
+        rect.x + (rect.width / 2),
+        rect.y + (rect.height / 2),
+    );
+}

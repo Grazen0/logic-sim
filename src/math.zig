@@ -30,15 +30,9 @@ pub fn distanceToSegment(point: Vector2, seg_a: Vector2, seg_b: Vector2) f32 {
 pub fn touchesSegment(point: Vector2, seg_a: Vector2, seg_b: Vector2, seg_thick: f32) bool {
     const x_min = @min(seg_a.x, seg_b.x);
     const x_max = @max(seg_a.x, seg_b.x);
+    const y_min = @min(seg_a.y, seg_b.y);
+    const y_max = @max(seg_a.y, seg_b.y);
 
-    return point.x >= x_min and point.x <= x_max and distanceToSegment(point, seg_a, seg_b) < (seg_thick / 2);
-}
-
-pub fn rectPad(rect: Rectangle, padding: f32) Rectangle {
-    return .init(
-        rect.x - padding,
-        rect.y - padding,
-        rect.width + (2 * padding),
-        rect.height + (2 * padding),
-    );
+    const within_bounds = (point.x >= x_min and point.x <= x_max) or (point.y >= y_min and point.y <= y_max);
+    return within_bounds and distanceToSegment(point, seg_a, seg_b) < (seg_thick / 2);
 }

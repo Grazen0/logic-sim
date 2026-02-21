@@ -4,6 +4,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const rg = @import("raygui");
 const re = @import("../ray_extra.zig");
+const consts = @import("../consts.zig");
 const globals = @import("../globals.zig");
 const GameContext = @import("../GameContext.zig");
 const core = @import("../core.zig");
@@ -13,7 +14,7 @@ const ArrayList = std.ArrayList;
 const Rectangle = rl.Rectangle;
 const Vector2 = rl.Vector2;
 const CustomModule = core.CustomModule;
-const colors = globals.colors;
+const colors = consts.colors;
 
 const btn_size = 120;
 const btn_spacing = 20;
@@ -28,7 +29,7 @@ mod_list: ArrayList(struct { CustomModule.Key, *const CustomModule }),
 page: usize,
 max_page: usize,
 new_mod_dialog: bool,
-new_mod_name: [globals.max_mod_name_size:0]u8,
+new_mod_name: [consts.max_mod_name_size:0]u8,
 
 pub fn init(gpa: Allocator, ctx: *GameContext) !Self {
     var out: Self = .{
@@ -52,15 +53,15 @@ pub fn deinit(self: *Self, gpa: Allocator) void {
 pub fn frame(self: *Self, gpa: Allocator) !void {
     rl.clearBackground(colors.background);
 
-    const font = try rl.getFontDefault();
-    re.drawTextAligned(font, "Logic Simulator", .init(globals.screen_width / 2, 80), 60, 60 * 0.1, colors.text, .center, .top);
-    re.drawTextAligned(font, globals.version_string, globals.screen_size.subtract(.init(20, 10)), 30, 30 * 0.1, colors.text_muted, .right, .bottom);
+    const font = rl.getFontDefault() catch unreachable;
+    re.drawTextAligned(font, "Logic Simulator", .init(consts.screen_width / 2, 80), 60, 60 * 0.1, colors.text, .center, .top);
+    re.drawTextAligned(font, consts.version_string, consts.screen_size.subtract(.init(20, 10)), 30, 30 * 0.1, colors.text_muted, .right, .bottom);
 
     if (self.new_mod_dialog)
         rg.lock();
 
-    const left_nav_pos: Rectangle = .init(10, (globals.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
-    const right_nav_pos: Rectangle = .init(globals.screen_width - nav_btn_size.x - 10, (globals.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
+    const left_nav_pos: Rectangle = .init(10, (consts.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
+    const right_nav_pos: Rectangle = .init(consts.screen_width - nav_btn_size.x - 10, (consts.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
 
     if (self.page > 0 and rg.button(left_nav_pos, "#118#"))
         self.page -= 1;
@@ -71,7 +72,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     rg.enable();
 
     const grid_width = page_cols * (btn_size + btn_spacing) - btn_spacing;
-    const gridX = (globals.screen_width / 2) - (grid_width / 2);
+    const gridX = (consts.screen_width / 2) - (grid_width / 2);
     const gridY = left_nav_pos.y;
 
     for (0..page_size) |pi| {
@@ -107,9 +108,9 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         re.drawTextAligned(
             font,
             "¡Create a new module to begin!",
-            .init(globals.screen_width / 2, globals.screen_height - 100),
-            globals.font_size,
-            globals.font_spacing,
+            .init(consts.screen_width / 2, consts.screen_height - 100),
+            consts.font_size,
+            consts.font_spacing,
             colors.text_muted,
             .center,
             .bottom,
@@ -120,10 +121,10 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
 
     if (self.new_mod_dialog) {
         rg.unlock();
-        rl.drawRectangle(0, 0, globals.screen_width, globals.screen_height, colors.dim);
+        rl.drawRectangle(0, 0, consts.screen_width, consts.screen_height, colors.dim);
 
         const prompt_size: Vector2 = .init(500, 200);
-        const prompt_pos = globals.screen_size.subtract(prompt_size).divide(.init(2, 2));
+        const prompt_pos = consts.screen_size.subtract(prompt_size).scale(0.5);
 
         const prompt_result = rg.textInputBox(
             .init(prompt_pos.x, prompt_pos.y, prompt_size.x, prompt_size.y),
@@ -131,7 +132,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
             "Module name:",
             "Create",
             &self.new_mod_name,
-            globals.max_mod_name_size,
+            consts.max_mod_name_size,
             null,
         );
 
@@ -142,7 +143,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
             else => @panic("invalid prompt result"),
         }
 
-        if (rl.isKeyPressed(globals.escape_key))
+        if (rl.isKeyPressed(consts.escape_key))
             self.new_mod_dialog = false;
 
         if (rl.isKeyPressed(.enter))
@@ -182,15 +183,15 @@ fn confirmCreateModule(self: *Self, gpa: Allocator) !void {
         .wires = .empty,
     };
 
-    const new_mod_key = try self.ctx.modules.put(gpa, new_mod);
+    const new_mod_key = try globals.modules.put(gpa, new_mod);
     self.ctx.next_scene = .{ .editor = new_mod_key };
 }
 
 fn computeModList(self: *Self, gpa: Allocator) !void {
-    var iter = self.ctx.modules.iterator();
+    var iter = globals.modules.iterator();
 
     self.mod_list.clearRetainingCapacity();
-    try self.mod_list.ensureTotalCapacity(gpa, self.ctx.modules.size);
+    try self.mod_list.ensureTotalCapacity(gpa, globals.modules.size);
 
     while (iter.next()) |entry|
         try self.mod_list.append(gpa, .{ entry.key, entry.val });

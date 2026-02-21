@@ -1,6 +1,7 @@
 const std = @import("std");
 const rl = @import("raylib");
 const structs = @import("./structs/structs.zig");
+const globals = @import("./globals.zig");
 
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -8,7 +9,7 @@ const Vector2 = rl.Vector2;
 const Color = rl.Color;
 const SlotMap = structs.SlotMap;
 
-pub const Module = struct {
+pub const Module = union(enum) {
     pub const LogicGate = struct {
         pub const Kind = enum { @"and", nand, @"or", nor, xor };
 
@@ -16,66 +17,68 @@ pub const Module = struct {
         input_cnt: usize,
     };
 
-    pub const Inner = union(enum) {
-        logic_gate: LogicGate,
-        not_gate,
-        custom: CustomModule.Key,
-    };
-
-    pos: Vector2,
-    v: Inner,
+    logic_gate: LogicGate,
+    not_gate,
+    custom: CustomModule.Key,
 };
 
 pub const CustomModule = struct {
     const Self = @This();
 
+    pub const Child = struct {
+        pub const Key = SlotMap(@This()).Key;
+
+        pos: Vector2,
+        mod: Module,
+
+        pub fn init(pos: Vector2, mod: Module) @This() {
+            return .{ .pos = pos, .mod = mod };
+        }
+    };
+
     pub const Key = SlotMap(Self).Key;
     pub const InputKey = SlotMap(Input).Key;
     pub const OutputKey = SlotMap(Output).Key;
-    pub const ChildKey = SlotMap(Module).Key;
     pub const WireKey = SlotMap(Wire).Key;
 
-    pub const ChildInputKeys = struct {
+    pub const ChildInput = struct {
         pub const I = union(enum) {
             logic_gate: usize,
             not_gate,
             custom: InputKey,
         };
 
-        child_key: ChildKey,
+        child_key: Child.Key,
         input: I,
 
         pub fn equals(self: @This(), other: @This()) bool {
-            return self.child_key.equals(other.child_key) and switch (self.input) {
-                .logic_gate => |i| switch (other.input) {
-                    .logic_gate => |j| i == j,
-                    else => false,
-                },
+            if (!self.child_key.equals(other.child_key))
+                return false;
+
+            return switch (self.input) {
+                .logic_gate => |i| other.input == .logic_gate and other.input.logic_gate == i,
                 .not_gate => other.input == .not_gate,
-                .custom => |k1| switch (other.input) {
-                    .custom => |k2| k1.equals(k2),
-                    else => false,
-                },
+                .custom => |key| other.input == .custom and other.input.custom.equals(key),
             };
         }
     };
 
-    pub const ChildOutputKeys = struct {
+    pub const ChildOutput = struct {
         pub const O = union(enum) {
             logic_gate,
             not_gate,
             custom: OutputKey,
         };
 
-        child_key: ChildKey,
+        child_key: Child.Key,
         output: O,
 
         pub fn equals(self: @This(), other: @This()) bool {
-            return self.child_key.equals(other.child_key) and switch (self.output) {
-                .custom => |k1| switch (other.output) {
-                    .custom => |k2| k1.equals(k2),
-                    else => false,
-                },
+            if (!self.child_key.equals(other.child_key))
+                return false;
+
+            return switch (self.output) {
+                .custom => |key| other.output == .custom and other.output.custom.equals(key),
                 .logic_gate => other.output == .logic_gate,
                 .not_gate => other.output == .not_gate,
             };
@@ -84,36 +87,24 @@ pub const CustomModule = struct {
 
     pub const WireSrc = union(enum) {
         top_input: InputKey,
-        child_output: ChildOutputKeys,
+        child_output: ChildOutput,
 
         pub fn equals(self: *const @This(), other: *const @This()) bool {
             return switch (self.*) {
-                .top_input => |k1| switch (other.*) {
-                    .top_input => |k2| k1.equals(k2),
-                    else => false,
-                },
-                .child_output => |k1| switch (other.*) {
-                    .child_output => |k2| k1.equals(k2),
-                    else => false,
-                },
+                .top_input => |key| other.* == .top_input and other.top_input.equals(key),
+                .child_output => |key| other.* == .child_output and other.child_output.equals(key),
             };
         }
     };
 
     pub const WireDest = union(enum) {
         top_output: OutputKey,
-        child_input: ChildInputKeys,
+        child_input: ChildInput,
 
         pub fn equals(self: *const @This(), other: *const @This()) bool {
             return switch (self.*) {
-                .top_output => |k1| switch (other.*) {
-                    .top_output => |k2| k1.equals(k2),
-                    else => false,
-                },
-                .child_input => |k1| switch (other.*) {
-                    .child_input => |k2| k1.equals(k2),
-                    else => false,
-                },
+                .top_output => |key| other.* == .top_output and other.top_output.equals(key),
+                .child_input => |key| other.* == .child_input and other.child_input.equals(key),
             };
         }
     };
@@ -164,7 +155,7 @@ pub const CustomModule = struct {
     color: Color,
     inputs: SlotMap(Input),
     outputs: SlotMap(Output),
-    children: SlotMap(Module),
+    children: SlotMap(Child),
     wires: SlotMap(Wire),
 
     pub fn deinit(self: *Self, gpa: Allocator) void {
@@ -174,9 +165,13 @@ pub const CustomModule = struct {
         while (input_iter.nextValue()) |input|
             input.deinit(gpa);
 
+        self.inputs.deinit(gpa);
+
         var output_iter = self.outputs.iterator();
         while (output_iter.nextValue()) |output|
             output.deinit(gpa);
+
+        self.outputs.deinit(gpa);
 
         self.children.deinit(gpa);
 
@@ -189,7 +184,7 @@ pub const CustomModule = struct {
         self.* = undefined;
     }
 
-    pub fn addWire(self: *@This(), gpa: Allocator, wire: Wire) !WireKey {
+    pub fn addWireOrModifyExisting(self: *@This(), gpa: Allocator, wire: Wire) !WireKey {
         var iter = self.wires.iterator();
         while (iter.next()) |entry| {
             const other_wire = entry.val;
@@ -204,15 +199,15 @@ pub const CustomModule = struct {
         return try self.wires.put(gpa, wire);
     }
 
-    pub fn dependsOn(modules: *const SlotMap(Self), mod_key: Key, search_key: Key) bool {
+    pub fn dependsOn(mod_key: Key, search_key: Key) bool {
         if (mod_key.equals(search_key))
             return true;
 
-        const mod = modules.get(mod_key).?;
+        const mod = globals.modules.get(mod_key).?;
 
         var iter = mod.children.const_iterator();
         while (iter.nextValue()) |child| {
-            if (child.v == .custom and Self.dependsOn(modules, child.v.custom, search_key))
+            if (child.mod == .custom and Self.dependsOn(child.mod.custom, search_key))
                 return true;
         }
 

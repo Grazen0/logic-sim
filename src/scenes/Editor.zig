@@ -7,6 +7,7 @@ const re = @import("../ray_extra.zig");
 const sim = @import("../simulation.zig");
 const math = @import("../math.zig");
 const structs = @import("../structs/structs.zig");
+const consts = @import("../consts.zig");
 const globals = @import("../globals.zig");
 const core = @import("../core.zig");
 const GameContext = @import("../GameContext.zig");
@@ -23,11 +24,12 @@ const ModuleInstance = sim.ModuleInstance;
 const CustomModuleInstance = sim.CustomModuleInstance;
 const Module = core.Module;
 const CustomModule = core.CustomModule;
+const Child = CustomModule.Child;
 const Wire = CustomModule.Wire;
 const WireSrc = CustomModule.WireSrc;
 const WireDest = CustomModule.WireDest;
 
-const colors = globals.colors;
+const colors = consts.colors;
 
 const wire_thick = 5;
 const port_radius = 12;
@@ -37,8 +39,8 @@ const top_port_btn_pin_distance = 45;
 const sim_rect: Rectangle = .init(
     15,
     60,
-    globals.screen_width - 30,
-    globals.screen_height - 140,
+    consts.screen_width - 30,
+    consts.screen_height - 140,
 );
 
 const HoverInfo = union(enum) {
@@ -46,14 +48,22 @@ const HoverInfo = union(enum) {
     top_input_btn: CustomModule.InputKey,
     top_input_pin: CustomModule.InputKey,
     top_output_pin: CustomModule.OutputKey,
-    mod_input: CustomModule.ChildInputKeys,
-    mod_output: CustomModule.ChildOutputKeys,
-    module: CustomModule.ChildKey,
+    child_input: CustomModule.ChildInput,
+    child_output: CustomModule.ChildOutput,
+    child: Child.Key,
     wire: CustomModule.WireKey,
+
+    pub fn isChildInput(self: *const @This(), child_key: Child.Key) bool {
+        return self == .mod_input and self.child_input.child_key.equals(child_key);
+    }
+
+    pub fn isChildOutput(self: *const @This(), child_key: Child.Key) bool {
+        return self == .mod_output and self.child_output.child_key.equals(child_key);
+    }
 };
 
-const SettingsState = struct {
-    name: [globals.max_mod_name_size:0]u8,
+const ModuleSettings = struct {
+    name: [consts.max_mod_name_size:0]u8,
     name_edit_mode: bool,
     color: Color,
 };
@@ -64,7 +74,7 @@ disabled_modules: AutoHashMap(CustomModule.Key, struct {}),
 mouse_action: union(enum) {
     none,
     drag_module: struct {
-        child_key: CustomModule.ChildKey,
+        child_key: Child.Key,
         offset: Vector2,
     },
     wire_from: WireSrc,
@@ -74,20 +84,25 @@ wire_points: ArrayList(Vector2),
 selection: union(enum) {
     none,
     wire: CustomModule.WireKey,
-    child: CustomModule.ChildKey,
+    child: Child.Key,
 },
 panel_view: Rectangle,
 panel_scroll: Vector2,
 panel_contents_width: f32,
-settings: ?SettingsState,
+mod_settings: ?ModuleSettings,
+child_settings: ?struct {
+    child_key: Child.Key,
+    v: union {
+        logic_gate: struct {
+            input_cnt: usize,
+        },
+    },
+},
 
 pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self {
-    var top_inst: CustomModuleInstance = try .fromModuleNoUpdate(gpa, &ctx.modules, mod_key);
-    try top_inst.update(gpa, &ctx.modules);
-
     var out: Self = .{
         .ctx = ctx,
-        .top_inst = top_inst,
+        .top_inst = try .fromModuleNoUpdate(gpa, mod_key),
         .disabled_modules = .init(gpa),
         .mouse_action = .none,
         .wire_points = .empty,
@@ -95,12 +110,15 @@ pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self 
         .panel_view = .init(0, 0, 0, 0),
         .panel_scroll = .init(0, 0),
         .panel_contents_width = 0,
-        .settings = null,
+        .mod_settings = null,
+        .child_settings = null,
     };
 
-    var mod_iter = ctx.modules.const_iterator();
+    try out.top_inst.update(gpa);
+
+    var mod_iter = globals.modules.const_iterator();
     while (mod_iter.nextKey()) |key| {
-        if (CustomModule.dependsOn(&ctx.modules, key, mod_key))
+        if (CustomModule.dependsOn(key, mod_key))
             try out.disabled_modules.put(key, .{});
     }
 
@@ -110,13 +128,14 @@ pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self 
 pub fn deinit(self: *Self, gpa: Allocator) void {
     self.top_inst.deinit(gpa);
     self.wire_points.deinit(gpa);
+    self.disabled_modules.deinit();
     self.* = undefined;
 }
 
 pub fn frame(self: *Self, gpa: Allocator) !void {
     rg.unlock();
 
-    if (self.settings != null)
+    if (self.mod_settings != null)
         rg.lock();
 
     const top_mod = self.topMod();
@@ -141,9 +160,9 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     if (rl.isMouseButtonPressed(.right))
         self.onRightClick();
 
-    if (rl.isKeyPressed(globals.escape_key)) {
-        if (self.settings) |*settings| {
-            try self.closeSettings(gpa, settings, false);
+    if (rl.isKeyPressed(consts.escape_key)) {
+        if (self.mod_settings) |*settings| {
+            try self.closeModSettings(gpa, settings, false);
         } else {
             const dragging_wire = self.mouse_action == .wire_from or self.mouse_action == .wire_to;
 
@@ -167,7 +186,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     switch (self.mouse_action) {
         .drag_module => |drag| {
             const dragged_child = top_mod.children.get(drag.child_key).?;
-            const clamp_bounds = self.moduleClampBounds(dragged_child);
+            const clamp_bounds = childClampBounds(dragged_child);
             dragged_child.pos = mouse.add(drag.offset).clamp(clamp_bounds[0], clamp_bounds[1]);
         },
         else => {},
@@ -176,7 +195,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     self.drawTopBar();
     try self.drawBottomPanel(gpa);
 
-    if (self.settings) |*settings| {
+    if (self.mod_settings) |*settings| {
         rg.unlock();
         try self.drawSettingsMenu(gpa, settings);
     }
@@ -186,12 +205,12 @@ fn removeWire(self: *Self, gpa: Allocator, wire_key: CustomModule.WireKey) !void
     const top_mod = self.topMod();
     const wire = top_mod.wires.get(wire_key).?;
     _ = top_mod.wires.remove(wire_key);
-    try self.top_inst.writeWireDestUpdate(gpa, &self.ctx.modules, wire.to, false);
+    try self.top_inst.writeWireDestUpdate(gpa, wire.to, false);
 }
 
-fn removeChild(self: *Self, gpa: Allocator, child_key: CustomModule.ChildKey) !void {
+fn removeChild(self: *Self, gpa: Allocator, child_key: Child.Key) !void {
     const top_mod = self.topMod();
-    var wire_iter = top_mod.wires.iterator();
+    var wire_iter = top_mod.wires.const_iterator();
 
     while (wire_iter.next()) |entry| {
         const wire = entry.val;
@@ -207,22 +226,22 @@ fn removeChild(self: *Self, gpa: Allocator, child_key: CustomModule.ChildKey) !v
     _ = self.top_inst.children.remove(child_key);
 }
 
-fn drawSettingsMenu(self: *Self, gpa: Allocator, settings: *SettingsState) !void {
-    rl.drawRectangle(0, 0, globals.screen_width, globals.screen_height, colors.dim);
+fn drawSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !void {
+    rl.drawRectangle(0, 0, consts.screen_width, consts.screen_height, colors.dim);
 
     const rect_size: Vector2 = .init(600, 400);
-    const rect_pos: Vector2 = globals.screen_size.subtract(rect_size).divide(.init(2, 2));
+    const rect_pos: Vector2 = consts.screen_size.subtract(rect_size).scale(0.5);
 
     const win_rect: Rectangle = .init(rect_pos.x, rect_pos.y, rect_size.x, rect_size.y);
     const result = rg.windowBox(win_rect, "Module settings");
 
     if (result == 1) {
-        try self.closeSettings(gpa, settings, false);
+        try self.closeModSettings(gpa, settings, false);
         return;
     }
 
     const pad = 30;
-    const font = try rl.getFontDefault();
+    const font = rl.getFontDefault() catch unreachable;
 
     rl.drawTextEx(font, "Name:", .init(win_rect.x + pad, win_rect.y + 45), 24, 24 * 0.1, colors.text);
 
@@ -262,23 +281,23 @@ fn drawSettingsMenu(self: *Self, gpa: Allocator, settings: *SettingsState) !void
     );
 
     if (rg.button(save_btn_rect, "Save") or rl.isKeyPressed(.enter))
-        try self.closeSettings(gpa, settings, true);
+        try self.closeModSettings(gpa, settings, true);
 }
 
-fn openSettings(self: *Self) void {
+fn openModSettings(self: *Self) void {
     const top_mod = self.topMod();
 
-    self.settings = .{
+    self.mod_settings = .{
         .name = undefined,
         .name_edit_mode = true,
         .color = top_mod.color,
     };
 
     const n = top_mod.name.len + 1;
-    @memcpy(self.settings.?.name[0..n], top_mod.name.ptr[0..n]);
+    @memcpy(self.mod_settings.?.name[0..n], top_mod.name.ptr[0..n]);
 }
 
-fn closeSettings(self: *Self, gpa: Allocator, settings: *const SettingsState, save: bool) !void {
+fn closeModSettings(self: *Self, gpa: Allocator, settings: *const ModuleSettings, save: bool) !void {
     if (save) {
         const top_mod = self.topMod();
 
@@ -293,7 +312,16 @@ fn closeSettings(self: *Self, gpa: Allocator, settings: *const SettingsState, sa
         top_mod.name = try gpa.dupeZ(u8, trimmed);
     }
 
-    self.settings = null;
+    self.mod_settings = null;
+}
+
+fn openChildSettings(self: *Self, child_key: Child.Key) void {
+    const child = self.top_inst.children.get(child_key).?;
+
+    self.child_settings = .{ .child_key = child_key, .v = switch (child.*) {
+        .logic_gate => |*gate| .{ .logic_gate = .{ .input_cnt = gate.inputs.items.len } },
+        .not_gate, .custom => unreachable,
+    } };
 }
 
 fn drawTopBar(self: *Self) void {
@@ -303,9 +331,9 @@ fn drawTopBar(self: *Self) void {
         self.ctx.next_scene = .selector;
 
     if (rg.button(.init(65, 10, 40, 40), "#140#"))
-        self.openSettings();
+        self.openModSettings();
 
-    rl.drawText(top_mod.name, 125, 15, globals.font_size, colors.text);
+    rl.drawText(top_mod.name, 125, 15, consts.font_size, colors.text);
 }
 
 const btn_spacing = 8;
@@ -313,15 +341,15 @@ const btn_spacing = 8;
 const panel_height = 65;
 const panel_rect: Rectangle = .init(
     15,
-    globals.screen_height - panel_height - 10,
-    globals.screen_width - 30,
+    consts.screen_height - panel_height - 10,
+    consts.screen_width - 30,
     panel_height,
 );
 
 const btn_height = panel_rect.height - 24;
 
 fn bottomButton(label: [:0]const u8, pos: *Vector2) bool {
-    const measure: f32 = @floatFromInt(rl.measureText(label, globals.font_size));
+    const measure: f32 = @floatFromInt(rl.measureText(label, consts.font_size));
     const btn_width = 20 + measure;
 
     const result = rg.button(.init(pos.x, pos.y, btn_width, btn_height), label);
@@ -329,8 +357,8 @@ fn bottomButton(label: [:0]const u8, pos: *Vector2) bool {
     return result;
 }
 
-fn moduleClampBounds(self: *const Self, module: *const Module) struct { Vector2, Vector2 } {
-    const bounds = self.moduleBounds(module);
+fn childClampBounds(child: *const Child) struct { Vector2, Vector2 } {
+    const bounds = childBounds(child);
     return .{
         .init(sim_rect.x, sim_rect.y),
         .init(
@@ -340,16 +368,13 @@ fn moduleClampBounds(self: *const Self, module: *const Module) struct { Vector2,
     };
 }
 
-fn addChildModule(self: *Self, gpa: Allocator, child_v: Module.Inner) !void {
+fn addChildModule(self: *Self, gpa: Allocator, child_v: Module) !void {
     const top_mod = self.topMod();
 
-    var child: Module = .{
-        .pos = globals.screen_size.divide(.init(2, 2)),
-        .v = child_v,
-    };
-    const child_inst: ModuleInstance = try .fromModule(gpa, &child.v, &self.ctx.modules);
+    var child: Child = .init(consts.screen_size.scale(0.5), child_v);
+    const child_inst: ModuleInstance = try .fromModule(gpa, &child.mod);
 
-    const clamp_bounds = self.moduleClampBounds(&child);
+    const clamp_bounds = childClampBounds(&child);
 
     while (containsChildWithPos(&top_mod.children, child.pos)) {
         const new_pos = child.pos.add(.init(25, 25)).clamp(clamp_bounds[0], clamp_bounds[1]);
@@ -394,7 +419,7 @@ fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
     if (bottomButton("not", &btn_pos))
         try self.addChildModule(gpa, .not_gate);
 
-    var iter = self.ctx.modules.const_iterator();
+    var iter = globals.modules.const_iterator();
     while (iter.next()) |entry| {
         const mod = entry.val;
 
@@ -409,10 +434,10 @@ fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
     self.panel_contents_width = btn_pos.x;
 }
 
-fn containsChildWithPos(children: *const SlotMap(Module), pos: Vector2) bool {
+fn containsChildWithPos(children: *const SlotMap(Child), pos: Vector2) bool {
     var iter = children.const_iterator();
     while (iter.nextValue()) |child| {
-        if (child.pos.distanceSqr(pos) < globals.epsilon_sqr)
+        if (child.pos.distanceSqr(pos) < consts.epsilon_sqr)
             return true;
     }
 
@@ -421,7 +446,7 @@ fn containsChildWithPos(children: *const SlotMap(Module), pos: Vector2) bool {
 
 fn drawWire(self: *const Self, wire: *const Wire, highlight: bool) void {
     const wire_value = self.top_inst.readWireSrc(wire.from).?;
-    const from_pos = self.getWireSrcPos(&wire.from);
+    const from_pos = self.wireSrcPos(&wire.from);
     const to_pos = self.wireDestPos(&wire.to);
 
     if (highlight)
@@ -450,7 +475,7 @@ fn drawWireLines(start: Vector2, end: Vector2, points: []Vector2, thick: f32, co
     rl.drawCircleV(end, thick / 2, color);
 }
 
-fn drawSimulation(self: *Self, mouse: Vector2, hover: HoverInfo) !Vector2 {
+fn drawSimulation(self: *const Self, mouse: Vector2, hover: HoverInfo) !Vector2 {
     rl.drawRectangleLinesEx(sim_rect, 2, colors.text_muted);
 
     re.beginScissorModeRec(sim_rect);
@@ -458,21 +483,18 @@ fn drawSimulation(self: *Self, mouse: Vector2, hover: HoverInfo) !Vector2 {
 
     const top_mod = self.topMod();
 
-    var wire_iter = top_mod.wires.iterator();
+    var wire_iter = top_mod.wires.const_iterator();
     while (wire_iter.next()) |entry| {
-        const highlight = switch (self.selection) {
-            .wire => |wire_key| wire_key.equals(entry.key),
-            else => false,
-        };
+        const highlight = self.selection == .wire and self.selection.wire.equals(entry.key);
         self.drawWire(entry.val, highlight);
     }
 
-    const snap = rl.isKeyDown(.left_shift);
+    const snap = rl.isKeyDown(.left_shift) or rl.isKeyDown(.right_shift);
 
     const snapped_mouse: Vector2 = switch (self.mouse_action) {
         .wire_from => |from| blk: {
             const from_value = self.top_inst.readWireSrc(from).?;
-            const from_pos = self.getWireSrcPos(&from);
+            const from_pos = self.wireSrcPos(&from);
 
             const last_point = self.wire_points.getLastOrNull() orelse from_pos;
             const snapped_mouse = if (snap) math.snap(last_point, mouse) else mouse;
@@ -491,7 +513,6 @@ fn drawSimulation(self: *Self, mouse: Vector2, hover: HoverInfo) !Vector2 {
     };
 
     var input_iter = top_mod.inputs.const_iterator();
-
     while (input_iter.nextKey()) |input_key| {
         const value = self.top_inst.inputs.get(input_key).?.*;
         const btn_pos = self.topInputBtnPos(input_key);
@@ -505,7 +526,6 @@ fn drawSimulation(self: *Self, mouse: Vector2, hover: HoverInfo) !Vector2 {
     }
 
     var output_iter = top_mod.outputs.const_iterator();
-
     while (output_iter.nextKey()) |output_key| {
         const value = self.top_inst.outputs.get(output_key).?.*;
         const btn_pos = self.topOutputPosBtn(output_key);
@@ -518,20 +538,25 @@ fn drawSimulation(self: *Self, mouse: Vector2, hover: HoverInfo) !Vector2 {
         rl.drawCircleV(btn_pos, top_port_radius_btn, logicColor(value));
     }
 
-    var child_iter = top_mod.children.iterator();
+    var child_iter = top_mod.children.const_iterator();
     while (child_iter.nextKey()) |child_key|
-        try self.drawChild(child_key, hover);
+        self.drawChild(child_key, hover);
 
     return snapped_mouse;
 }
 
 fn moduleRectangle(pos: Vector2, label: [:0]const u8, ports: usize) Rectangle {
-    const measure: f32 = @floatFromInt(rl.measureText(label, globals.font_size));
+    const port_spacing = 6;
+
+    const measure: f32 = @floatFromInt(rl.measureText(label, consts.font_size));
     const portsf: f32 = @floatFromInt(ports);
 
-    const size: Vector2 = .init(40 + measure, (portsf * (2 * port_radius)) + ((portsf + 1) * 6));
-
-    return .init(pos.x, pos.y, size.x, size.y);
+    return .init(
+        pos.x,
+        pos.y,
+        40 + measure,
+        (portsf * (2 * port_radius)) + ((portsf + 1) * port_spacing),
+    );
 }
 
 fn logicGateBounds(pos: Vector2, gate: *const Module.LogicGate) Rectangle {
@@ -550,148 +575,134 @@ fn customModuleBounds(pos: Vector2, module: *const CustomModule) Rectangle {
     );
 }
 
-fn moduleBounds(self: *const Self, child: *const Module) Rectangle {
-    return switch (child.v) {
+fn childBounds(child: *const Child) Rectangle {
+    return switch (child.mod) {
         .logic_gate => |*gate| logicGateBounds(child.pos, gate),
         .not_gate => notGateBounds(child.pos),
-        .custom => |mod_key| customModuleBounds(child.pos, self.ctx.modules.get(mod_key).?),
+        .custom => |mod_key| customModuleBounds(child.pos, globals.modules.get(mod_key).?),
     };
 }
 
-fn drawRectangleModule(pos: Vector2, label: [:0]const u8, color: Color, ports: usize) !void {
-    const rect = moduleRectangle(pos, label, ports);
-    rl.drawRectangleRec(rect, color);
+const selection_pad = 8;
 
-    const font = try rl.getFontDefault();
-    re.drawTextAligned(
-        font,
-        label,
-        pos.add(.init(rect.width / 2, rect.height / 2)),
-        globals.font_size,
-        globals.font_spacing,
-        colors.text,
-        .center,
-        .center,
+fn drawLogicGate(gate: *const Module.LogicGate, pos: Vector2, hovered_input: bool, hovered_output: bool, hover: HoverInfo, selected: bool) void {
+    const font = rl.getFontDefault() catch unreachable;
+    const bounds = logicGateBounds(pos, gate);
+    const bounds_center = re.rectCenter(bounds);
+
+    const color = switch (gate.kind) {
+        .@"and" => colors.and_gate,
+        .nand => colors.nand_gate,
+        .@"or" => colors.or_gate,
+        .nor => colors.nor_gate,
+        .xor => colors.xor_gate,
+    };
+
+    if (selected)
+        rl.drawRectangleRec(re.rectPad(bounds, selection_pad), colors.selection_border);
+
+    rl.drawRectangleRec(bounds, color);
+    re.drawTextAligned(font, @tagName(gate.kind), bounds_center, consts.font_size, consts.font_spacing, colors.text, .center, .center);
+
+    for (0..gate.input_cnt) |input| {
+        const highlight = hovered_input and hover.child_input.input.logic_gate == input;
+
+        rl.drawCircleV(
+            logicGateInputPos(gate, pos, input),
+            port_radius,
+            if (highlight) colors.background_alt else colors.port,
+        );
+    }
+
+    rl.drawCircleV(
+        logicGateOutputPos(gate, pos),
+        port_radius,
+        if (hovered_output) colors.background_alt else colors.port,
     );
 }
 
-fn drawChild(self: *const Self, child_key: CustomModule.ChildKey, hover: HoverInfo) !void {
+fn drawNotGate(pos: Vector2, hovered_input: bool, hovered_output: bool, selected: bool) void {
+    const font = rl.getFontDefault() catch unreachable;
+    const bounds = notGateBounds(pos);
+    const bounds_center = re.rectCenter(bounds);
+
+    if (selected)
+        rl.drawRectangleRec(re.rectPad(bounds, selection_pad), colors.selection_border);
+
+    rl.drawRectangleRec(bounds, colors.not_gate);
+    re.drawTextAligned(font, "not", bounds_center, consts.font_size, consts.font_spacing, colors.text, .center, .center);
+
+    rl.drawCircleV(
+        notGateInputPos(pos),
+        port_radius,
+        if (hovered_input) colors.background_alt else colors.port,
+    );
+
+    rl.drawCircleV(
+        notGateOutputPos(pos),
+        port_radius,
+        if (hovered_output) colors.background_alt else colors.port,
+    );
+}
+
+fn drawCustomModule(mod_key: CustomModule.Key, pos: Vector2, hovered_input: bool, hovered_output: bool, hover: HoverInfo, selected: bool) void {
+    const font = rl.getFontDefault() catch unreachable;
+    const mod = globals.modules.get(mod_key).?;
+    const bounds = customModuleBounds(pos, mod);
+    const bounds_center = re.rectCenter(bounds);
+
+    if (selected)
+        rl.drawRectangleRec(re.rectPad(bounds, selection_pad), colors.selection_border);
+
+    rl.drawRectangleRec(bounds, mod.color);
+
+    var input_iter = mod.inputs.const_iterator();
+    while (input_iter.nextKey()) |input_key| {
+        const highlight = hovered_input and hover.child_input.input.custom.equals(input_key);
+
+        rl.drawCircleV(
+            customModuleInputPos(mod, pos, input_key),
+            port_radius,
+            if (highlight) colors.background_alt else colors.port,
+        );
+    }
+
+    var output_iter = mod.outputs.const_iterator();
+    while (output_iter.nextKey()) |output_key| {
+        const highlight = hovered_output and hover.child_output.output.custom.equals(output_key);
+
+        rl.drawCircleV(
+            customModuleOutputPos(mod, pos, output_key),
+            port_radius,
+            if (highlight) colors.background_alt else colors.port,
+        );
+    }
+
+    re.drawTextAligned(font, mod.name, bounds_center, consts.font_size, consts.font_spacing, colors.text, .center, .center);
+}
+
+fn drawChild(self: *const Self, child_key: Child.Key, hover: HoverInfo) void {
     const top_mod = self.topMod();
     const child = top_mod.children.get(child_key).?;
 
-    const font = try rl.getFontDefault();
-
-    const selection_pad = 8;
-
-    const selected = switch (self.selection) {
-        .child => |selected_child| selected_child.equals(child_key),
-        else => false,
-    };
+    const selected = self.selection == .child and self.selection.child.equals(child_key);
 
     // All module kinds use this to draw a rect, at least for now.
-    const bounds = self.moduleBounds(child);
-    const bounds_center = child.pos.add(.init(bounds.width / 2, bounds.height / 2));
+    const hovered_input = hover == .child_input and hover.child_input.child_key.equals(child_key);
+    const hovered_output = hover == .child_output and hover.child_output.child_key.equals(child_key);
 
-    const hovering_input = hover == .mod_input and hover.mod_input.child_key.equals(child_key);
-    const hovering_output = hover == .mod_output and hover.mod_output.child_key.equals(child_key);
-
-    switch (child.v) {
-        .logic_gate => |*gate| {
-            const color = switch (gate.kind) {
-                .@"and" => colors.and_gate,
-                .nand => colors.nand_gate,
-                .@"or" => colors.or_gate,
-                .nor => colors.nor_gate,
-                .xor => colors.xor_gate,
-            };
-
-            if (selected)
-                rl.drawRectangleRec(math.rectPad(bounds, selection_pad), colors.selection_border);
-
-            rl.drawRectangleRec(bounds, color);
-            re.drawTextAligned(font, @tagName(gate.kind), bounds_center, globals.font_size, globals.font_spacing, colors.text, .center, .center);
-
-            for (0..gate.input_cnt) |input| {
-                const highlight = hovering_input and hover.mod_input.input.logic_gate == input;
-
-                rl.drawCircleV(
-                    logicGateInputPos(gate, child.pos, input),
-                    port_radius,
-                    if (highlight) colors.background_alt else colors.port,
-                );
-            }
-
-            rl.drawCircleV(
-                logicGateOutputPos(gate, child.pos),
-                port_radius,
-                if (hovering_output) colors.background_alt else colors.port,
-            );
-        },
-        .not_gate => {
-            if (selected)
-                rl.drawRectangleRec(math.rectPad(bounds, selection_pad), colors.selection_border);
-
-            rl.drawRectangleRec(bounds, colors.not_gate);
-            re.drawTextAligned(font, "not", bounds_center, globals.font_size, globals.font_spacing, colors.text, .center, .center);
-
-            rl.drawCircleV(
-                notGateInputPos(child.pos),
-                port_radius,
-                if (hovering_input) colors.background_alt else colors.port,
-            );
-
-            rl.drawCircleV(
-                notGateOutputPos(child.pos),
-                port_radius,
-                if (hovering_output) colors.background_alt else colors.port,
-            );
-        },
-        .custom => |mod_key| {
-            const mod = self.ctx.modules.get(mod_key).?;
-
-            if (selected)
-                rl.drawRectangleRec(math.rectPad(bounds, selection_pad), colors.selection_border);
-
-            rl.drawRectangleRec(bounds, mod.color);
-
-            var input_iter = top_mod.inputs.const_iterator();
-            while (input_iter.nextKey()) |input_key| {
-                const highlight = switch (hover) {
-                    .mod_input => |info| info.child_key.equals(child_key) and info.input.custom.equals(input_key),
-                    else => false,
-                };
-
-                rl.drawCircleV(
-                    customModuleInputPos(mod, child.pos, input_key),
-                    port_radius,
-                    if (highlight) colors.background_alt else colors.port,
-                );
-            }
-
-            var output_iter = top_mod.outputs.const_iterator();
-            while (output_iter.nextKey()) |output_key| {
-                const highlight = switch (hover) {
-                    .mod_output => |info| info.child_key.equals(child_key) and info.output.custom.equals(output_key),
-                    else => false,
-                };
-
-                rl.drawCircleV(
-                    customModuleOutputPos(mod, child.pos, output_key),
-                    port_radius,
-                    if (highlight) colors.background_alt else colors.port,
-                );
-            }
-
-            re.drawTextAligned(font, mod.name, bounds_center, globals.font_size, globals.font_spacing, colors.text, .center, .center);
-        },
+    switch (child.mod) {
+        .logic_gate => |*gate| drawLogicGate(gate, child.pos, hovered_input, hovered_output, hover, selected),
+        .not_gate => drawNotGate(child.pos, hovered_input, hovered_output, selected),
+        .custom => |mod_key| drawCustomModule(mod_key, child.pos, hovered_input, hovered_output, hover, selected),
     }
 }
 
 fn addWire(self: *Self, gpa: Allocator, wire: Wire) !void {
     const top_mod = self.topMod();
 
-    const new_wire_key = try top_mod.addWire(gpa, wire);
-    try self.top_inst.updateFromSrcs(gpa, &self.ctx.modules, &.{wire.from});
+    const new_wire_key = try top_mod.addWireOrModifyExisting(gpa, wire);
+    try self.top_inst.updateFromSrcs(gpa, &.{wire.from});
     self.mouse_action = .none;
     self.selection = .{ .wire = new_wire_key };
 }
@@ -701,7 +712,7 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snappe
 
     switch (self.mouse_action) {
         .wire_from => |from| switch (hover) {
-            .mod_input => |info| {
+            .child_input => |info| {
                 const new_wire: Wire = try .init(gpa, from, .{ .child_input = info }, self.wire_points.items);
                 try self.addWire(gpa, new_wire);
             },
@@ -712,11 +723,13 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snappe
             else => try self.wire_points.append(gpa, snapped_mouse),
         },
         .wire_to => |to| blk: {
-            const points_rev = try self.wire_points.clone(gpa);
+            var points_rev = try self.wire_points.clone(gpa);
+            defer points_rev.deinit(gpa);
+
             std.mem.reverse(Vector2, points_rev.items);
 
             break :blk switch (hover) {
-                .mod_output => |info| {
+                .child_output => |info| {
                     const new_wire: Wire = try .init(gpa, .{ .child_output = info }, to, points_rev.items);
                     try self.addWire(gpa, new_wire);
                 },
@@ -736,7 +749,7 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snappe
                 .top_input_btn => |input| {
                     const prev_value = self.top_inst.inputs.get(input).?.*;
                     _ = self.top_inst.inputs.putAssumeCapacity(input, !prev_value);
-                    try self.top_inst.updateFromSrcs(gpa, &self.ctx.modules, &.{.{ .top_input = input }});
+                    try self.top_inst.updateFromSrcs(gpa, &.{.{ .top_input = input }});
                 },
                 .top_input_pin => |input| {
                     self.mouse_action = .{ .wire_from = .{ .top_input = input } };
@@ -746,7 +759,7 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snappe
                     self.mouse_action = .{ .wire_to = .{ .top_output = output } };
                     self.wire_points.clearAndFree(gpa);
                 },
-                .module => |child_key| {
+                .child => |child_key| {
                     self.selection = .{ .child = child_key };
 
                     self.mouse_action = .{
@@ -756,11 +769,11 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snappe
                         },
                     };
                 },
-                .mod_input => |info| {
+                .child_input => |info| {
                     self.mouse_action = .{ .wire_to = .{ .child_input = info } };
                     self.wire_points.clearAndFree(gpa);
                 },
-                .mod_output => |info| {
+                .child_output => |info| {
                     self.mouse_action = .{ .wire_from = .{ .child_output = info } };
                     self.wire_points.clearAndFree(gpa);
                 },
@@ -785,7 +798,7 @@ fn onUnclick(self: *Self) void {
 }
 
 fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
-    if (self.settings != null)
+    if (self.mod_settings != null)
         return .none;
 
     const top_mod = self.topMod();
@@ -810,14 +823,14 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
     while (child_iter.next()) |entry| {
         const child = entry.val;
 
-        switch (child.v) {
+        switch (child.mod) {
             .logic_gate => |*gate| {
                 for (0..gate.input_cnt) |input| {
                     const input_pos = logicGateInputPos(gate, child.pos, input);
 
                     if (mouse.distance(input_pos) <= port_radius) {
                         return .{
-                            .mod_input = .{
+                            .child_input = .{
                                 .child_key = entry.key,
                                 .input = .{ .logic_gate = input },
                             },
@@ -828,7 +841,7 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
                 const output_pos = logicGateOutputPos(gate, child.pos);
                 if (mouse.distance(output_pos) <= port_radius) {
                     return .{
-                        .mod_output = .{
+                        .child_output = .{
                             .child_key = entry.key,
                             .output = .logic_gate,
                         },
@@ -841,7 +854,7 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
 
                 if (mouse.distance(input_pos) <= port_radius) {
                     return .{
-                        .mod_input = .{
+                        .child_input = .{
                             .child_key = entry.key,
                             .input = .not_gate,
                         },
@@ -850,7 +863,7 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
 
                 if (mouse.distance(output_pos) <= port_radius) {
                     return .{
-                        .mod_output = .{
+                        .child_output = .{
                             .child_key = entry.key,
                             .output = .not_gate,
                         },
@@ -858,7 +871,7 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
                 }
             },
             .custom => |mod_key| {
-                const child_mod = self.ctx.modules.get(mod_key).?;
+                const child_mod = globals.modules.get(mod_key).?;
 
                 input_iter = child_mod.inputs.const_iterator();
                 while (input_iter.nextKey()) |input_key| {
@@ -866,7 +879,7 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
 
                     if (mouse.distance(input_pos) <= port_radius) {
                         return .{
-                            .mod_input = .{
+                            .child_input = .{
                                 .child_key = entry.key,
                                 .input = .{ .custom = input_key },
                             },
@@ -880,7 +893,7 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
 
                     if (mouse.distance(output_pos) <= port_radius) {
                         return .{
-                            .mod_output = .{
+                            .child_output = .{
                                 .child_key = entry.key,
                                 .output = .{ .custom = output_key },
                             },
@@ -890,17 +903,17 @@ fn getHoverInfo(self: *const Self, mouse: Vector2) HoverInfo {
             },
         }
 
-        const bounds = self.moduleBounds(child);
+        const bounds = childBounds(child);
 
         if (math.checkVec2RectCollision(mouse, bounds))
-            return .{ .module = entry.key };
+            return .{ .child = entry.key };
     }
 
-    var wire_iter = top_mod.wires.iterator();
+    var wire_iter = top_mod.wires.const_iterator();
 
     while (wire_iter.next()) |entry| {
         const wire = entry.val;
-        const from_pos = self.getWireSrcPos(&wire.from);
+        const from_pos = self.wireSrcPos(&wire.from);
         const to_pos = self.wireDestPos(&wire.to);
 
         var s = from_pos;
@@ -943,21 +956,21 @@ fn notGateOutputPos(base_pos: Vector2) Vector2 {
 
 fn customModuleInputPos(module: *const CustomModule, base_pos: Vector2, input_key: CustomModule.InputKey) Vector2 {
     const input = module.inputs.get(input_key).?;
-    const mod_size = customModuleBounds(base_pos, module);
+    const bounds = customModuleBounds(base_pos, module);
 
     return .init(
         base_pos.x,
-        base_pos.y + (input.pos * mod_size.y),
+        base_pos.y + (input.pos * bounds.height),
     );
 }
 
 fn customModuleOutputPos(module: *const CustomModule, base_pos: Vector2, output_key: CustomModule.OutputKey) Vector2 {
-    const mod_size = customModuleBounds(base_pos, module);
+    const bounds = customModuleBounds(base_pos, module);
     const output = module.outputs.get(output_key).?;
 
     return .init(
-        base_pos.x + mod_size.x,
-        base_pos.y - port_radius + (output.pos * mod_size.y),
+        base_pos.x + bounds.width,
+        base_pos.y + (output.pos * bounds.height),
     );
 }
 
@@ -978,7 +991,7 @@ fn topOutputPosBtn(self: *const Self, output_key: CustomModule.OutputKey) Vector
     const output = self.topMod().outputs.get(output_key).?;
 
     return .init(
-        globals.screen_width - (2 * top_port_radius_btn),
+        consts.screen_width - (2 * top_port_radius_btn),
         sim_rect.x + (output.pos * sim_rect.height),
     );
 }
@@ -988,34 +1001,30 @@ fn topOutputPinPos(self: *const Self, output_key: CustomModule.OutputKey) Vector
     return btn_pos.subtract(.init(top_port_btn_pin_distance, 0));
 }
 
-fn getWireSrcPos(self: *const Self, src: *const WireSrc) Vector2 {
+fn wireSrcPos(self: *const Self, src: *const WireSrc) Vector2 {
     switch (src.*) {
         .top_input => |input_key| return self.topInputPosPin(input_key),
         .child_output => |keys| {
             const child = self.topMod().children.get(keys.child_key).?;
-
-            return switch (child.v) {
+            return switch (child.mod) {
                 .logic_gate => |*gate| logicGateOutputPos(gate, child.pos),
                 .not_gate => notGateOutputPos(child.pos),
-                .custom => |key| customModuleOutputPos(self.ctx.modules.get(key).?, child.pos, keys.output.custom),
+                .custom => |key| customModuleOutputPos(globals.modules.get(key).?, child.pos, keys.output.custom),
             };
         },
     }
 }
 
 fn wireDestPos(self: *const Self, dest: *const WireDest) Vector2 {
-    const top_mod = self.topMod();
-
     switch (dest.*) {
         .top_output => |output_key| return self.topOutputPinPos(output_key),
         .child_input => |keys| {
-            const child = top_mod.children.get(keys.child_key).?;
-
-            return switch (child.v) {
+            const child = self.topMod().children.get(keys.child_key).?;
+            return switch (child.mod) {
                 .logic_gate => |*gate| logicGateInputPos(gate, child.pos, keys.input.logic_gate),
                 .not_gate => notGateInputPos(child.pos),
                 .custom => |mod_key| blk: {
-                    const child_mod = self.ctx.modules.get(mod_key).?;
+                    const child_mod = globals.modules.get(mod_key).?;
                     break :blk customModuleInputPos(child_mod, child.pos, keys.input.custom);
                 },
             };
@@ -1023,10 +1032,10 @@ fn wireDestPos(self: *const Self, dest: *const WireDest) Vector2 {
     }
 }
 
-fn logicColor(value: bool) Color {
+inline fn logicColor(value: bool) Color {
     return if (value) colors.logic_on else colors.logic_off;
 }
 
-fn topMod(self: *const Self) *CustomModule {
-    return self.ctx.modules.get(self.top_inst.mod_key).?;
+inline fn topMod(self: *const Self) *CustomModule {
+    return globals.modules.get(self.top_inst.mod_key).?;
 }
