@@ -11,6 +11,8 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const SlotMap = structs.SlotMap;
 
+const assert = std.debug.assert;
+
 const Scene = union(enum) {
     selector: scenes.Selector,
     editor: scenes.Editor,
@@ -33,9 +35,9 @@ const Scene = union(enum) {
 };
 
 pub fn main() anyerror!void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     const alloc = if (consts.web_build) std.heap.c_allocator else gpa.allocator();
-    defer std.debug.assert(!gpa.detectLeaks());
+    defer assert(!gpa.detectLeaks());
 
     defer {
         var iter = globals.modules.iterator();
