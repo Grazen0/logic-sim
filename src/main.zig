@@ -3,7 +3,8 @@ const rl = @import("raylib");
 const rg = @import("raygui");
 const structs = @import("./structs/structs.zig");
 const scenes = @import("./scenes/scenes.zig");
-const globals = @import("globals.zig");
+const consts = @import("./consts.zig");
+const globals = @import("./globals.zig");
 const GameContext = @import("./GameContext.zig");
 
 const ArrayList = std.ArrayList;
@@ -15,7 +16,9 @@ const Scene = union(enum) {
 };
 
 pub fn main() anyerror!void {
-    const alloc = std.heap.c_allocator;
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
+    const alloc = if (consts.web_build) std.heap.c_allocator else gpa.allocator();
+    defer std.debug.assert(!gpa.detectLeaks());
     rl.setConfigFlags(.{
         .msaa_4x_hint = true,
     });
