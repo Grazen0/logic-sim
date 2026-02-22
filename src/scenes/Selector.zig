@@ -6,6 +6,7 @@ const rg = @import("raygui");
 const re = @import("../ray_extra.zig");
 const consts = @import("../consts.zig");
 const globals = @import("../globals.zig");
+const theme = @import("../theme.zig");
 const GameContext = @import("../GameContext.zig");
 const core = @import("../core.zig");
 
@@ -13,8 +14,10 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const Rectangle = rl.Rectangle;
 const Vector2 = rl.Vector2;
+const IconName = rg.IconName;
 const CustomModule = core.CustomModule;
-const colors = consts.colors;
+
+const comptimePrint = std.fmt.comptimePrint;
 
 const btn_size = 120;
 const btn_spacing = 20;
@@ -51,11 +54,11 @@ pub fn deinit(self: *Self, gpa: Allocator) void {
 }
 
 pub fn frame(self: *Self, gpa: Allocator) !void {
-    rl.clearBackground(colors.background);
+    rl.clearBackground(theme.background);
 
     const font = rl.getFontDefault() catch unreachable;
-    re.drawTextAligned(font, "Logic Simulator", .init(consts.screen_width / 2, 80), 60, 60 * 0.1, colors.text, .center, .top);
-    re.drawTextAligned(font, consts.version_string, consts.screen_size.subtract(.init(20, 10)), 30, 30 * 0.1, colors.text_muted, .right, .bottom);
+    re.drawTextAligned(font, "Logic Simulator", .init(consts.screen_width / 2, 80), 60, 60 * 0.1, theme.text, .center, .top);
+    re.drawTextAligned(font, consts.version_string, consts.screen_size.subtract(.init(20, 10)), 30, 30 * 0.1, theme.text_muted, .right, .bottom);
 
     if (self.new_mod_dialog)
         rg.lock();
@@ -63,10 +66,10 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     const left_nav_pos: Rectangle = .init(10, (consts.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
     const right_nav_pos: Rectangle = .init(consts.screen_width - nav_btn_size.x - 10, (consts.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
 
-    if (self.page > 0 and rg.button(left_nav_pos, "#118#"))
+    if (self.page > 0 and rg.button(left_nav_pos, comptimePrint("#{d}#", .{IconName.arrow_left_fill})))
         self.page -= 1;
 
-    if (self.page < self.max_page and rg.button(right_nav_pos, "#119#"))
+    if (self.page < self.max_page and rg.button(right_nav_pos, comptimePrint("#{d}#", .{IconName.arrow_right_fill})))
         self.page += 1;
 
     rg.enable();
@@ -111,7 +114,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
             .init(consts.screen_width / 2, consts.screen_height - 100),
             consts.font_size,
             consts.font_spacing,
-            colors.text_muted,
+            theme.text_muted,
             .center,
             .bottom,
         );
@@ -121,7 +124,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
 
     if (self.new_mod_dialog) {
         rg.unlock();
-        rl.drawRectangle(0, 0, consts.screen_width, consts.screen_height, colors.dim);
+        rl.drawRectangle(0, 0, consts.screen_width, consts.screen_height, theme.dim);
 
         const prompt_size: Vector2 = .init(500, 200);
         const prompt_pos = consts.screen_size.subtract(prompt_size).scale(0.5);

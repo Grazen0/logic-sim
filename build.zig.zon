@@ -18,7 +18,7 @@
         "build.zig.zon",
         "src",
         "LICENSE",
-        "resources",
+        // "resources",
         "data",
     },
 }

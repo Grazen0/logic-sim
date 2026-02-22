@@ -8,6 +8,7 @@ const sim = @import("../simulation.zig");
 const math = @import("../math.zig");
 const structs = @import("../structs/structs.zig");
 const consts = @import("../consts.zig");
+const theme = @import("../theme.zig");
 const globals = @import("../globals.zig");
 const core = @import("../core.zig");
 const GameContext = @import("../GameContext.zig");
@@ -19,6 +20,7 @@ const Vector2 = rl.Vector2;
 const Rectangle = rl.Rectangle;
 const Color = rl.Color;
 const Font = rl.Font;
+const IconName = rg.IconName;
 const SlotMap = structs.SlotMap;
 const ModuleInstance = sim.ModuleInstance;
 const CustomModuleInstance = sim.CustomModuleInstance;
@@ -29,7 +31,7 @@ const Wire = CustomModule.Wire;
 const WireSrc = CustomModule.WireSrc;
 const WireDest = CustomModule.WireDest;
 
-const colors = consts.colors;
+const comptimePrint = std.fmt.comptimePrint;
 
 const wire_thick = 5;
 const port_radius = 12;
@@ -148,7 +150,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         else => rl.setMouseCursor(.pointing_hand),
     }
 
-    rl.clearBackground(colors.background);
+    rl.clearBackground(theme.background);
     const snapped_mouse = try self.drawSimulation(mouse, hover);
 
     if (rl.isMouseButtonPressed(.left)) {
@@ -227,7 +229,7 @@ fn removeChild(self: *Self, gpa: Allocator, child_key: Child.Key) !void {
 }
 
 fn drawSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !void {
-    rl.drawRectangle(0, 0, consts.screen_width, consts.screen_height, colors.dim);
+    rl.drawRectangle(0, 0, consts.screen_width, consts.screen_height, theme.dim);
 
     const rect_size: Vector2 = .init(600, 400);
     const rect_pos: Vector2 = consts.screen_size.subtract(rect_size).scale(0.5);
@@ -243,7 +245,7 @@ fn drawSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !voi
     const pad = 30;
     const font = rl.getFontDefault() catch unreachable;
 
-    rl.drawTextEx(font, "Name:", .init(win_rect.x + pad, win_rect.y + 45), 24, 24 * 0.1, colors.text);
+    rl.drawTextEx(font, "Name:", .init(win_rect.x + pad, win_rect.y + 45), 24, 24 * 0.1, theme.text);
 
     const mod_name_rect: Rectangle = .init(
         win_rect.x + pad,
@@ -260,12 +262,12 @@ fn drawSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !voi
         @as(i32, @intFromFloat(win_rect.x)) + pad,
         @as(i32, @intFromFloat(win_rect.y)) + 150,
         24,
-        colors.text,
+        theme.text,
     );
 
     const color_demo_rect: Rectangle = .init(win_rect.x + pad + 80, win_rect.y + 150, 24, 24);
     rl.drawRectangleRec(color_demo_rect, settings.color);
-    rl.drawRectangleLinesEx(color_demo_rect, 1, colors.text_muted);
+    rl.drawRectangleLinesEx(color_demo_rect, 1, theme.text_muted);
 
     _ = rg.colorPicker(
         .init(win_rect.x + pad, win_rect.y + 185, win_rect.width - (2 * pad) - 20, 120),
@@ -327,13 +329,13 @@ fn openChildSettings(self: *Self, child_key: Child.Key) void {
 fn drawTopBar(self: *Self) void {
     const top_mod = self.topMod();
 
-    if (rg.button(.init(15, 10, 40, 40), "#114#"))
+    if (rg.button(.init(15, 10, 40, 40), comptimePrint("#{d}#", .{IconName.arrow_left})))
         self.ctx.next_scene = .selector;
 
-    if (rg.button(.init(65, 10, 40, 40), "#140#"))
+    if (rg.button(.init(65, 10, 40, 40), comptimePrint("#{d}#", .{IconName.tools})))
         self.openModSettings();
 
-    rl.drawText(top_mod.name, 125, 15, consts.font_size, colors.text);
+    rl.drawText(top_mod.name, 125, 15, consts.font_size, theme.text);
 }
 
 const btn_spacing = 8;
@@ -398,7 +400,7 @@ fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
 
     _ = rg.scrollPanel(panel_rect, null, panel_contents, &self.panel_scroll, &self.panel_view);
 
-    rl.drawRectangleLinesEx(panel_rect, 2, colors.text_muted);
+    rl.drawRectangleLinesEx(panel_rect, 2, theme.text_muted);
 
     re.beginScissorModeRec(self.panel_view);
     defer rl.endScissorMode();
@@ -455,7 +457,7 @@ fn drawWire(self: *const Self, wire: *const Wire, highlight: bool) void {
             to_pos,
             wire.points,
             3 * wire_thick,
-            colors.selection_border,
+            theme.selection_border,
         );
 
     drawWireLines(from_pos, to_pos, wire.points, wire_thick, logicColor(wire_value));
@@ -476,7 +478,7 @@ fn drawWireLines(start: Vector2, end: Vector2, points: []Vector2, thick: f32, co
 }
 
 fn drawSimulation(self: *const Self, mouse: Vector2, hover: HoverInfo) !Vector2 {
-    rl.drawRectangleLinesEx(sim_rect, 2, colors.text_muted);
+    rl.drawRectangleLinesEx(sim_rect, 2, theme.text_muted);
 
     re.beginScissorModeRec(sim_rect);
     defer rl.endScissorMode();
@@ -520,8 +522,8 @@ fn drawSimulation(self: *const Self, mouse: Vector2, hover: HoverInfo) !Vector2 
 
         const highlight = hover == .top_input_pin and hover.top_input_pin.equals(input_key);
 
-        rl.drawLineEx(btn_pos, pin_pos, 8, colors.port);
-        rl.drawCircleV(pin_pos, top_port_radius_pin, if (highlight) colors.background_alt else colors.port);
+        rl.drawLineEx(btn_pos, pin_pos, 8, theme.port);
+        rl.drawCircleV(pin_pos, top_port_radius_pin, if (highlight) theme.background_alt else theme.port);
         rl.drawCircleV(btn_pos, top_port_radius_btn, logicColor(value));
     }
 
@@ -533,8 +535,8 @@ fn drawSimulation(self: *const Self, mouse: Vector2, hover: HoverInfo) !Vector2 
 
         const highlight = hover == .top_output_pin and hover.top_output_pin.equals(output_key);
 
-        rl.drawLineEx(btn_pos, pin_pos, 8, colors.port);
-        rl.drawCircleV(pin_pos, top_port_radius_pin, if (highlight) colors.background_alt else colors.port);
+        rl.drawLineEx(btn_pos, pin_pos, 8, theme.port);
+        rl.drawCircleV(pin_pos, top_port_radius_pin, if (highlight) theme.background_alt else theme.port);
         rl.drawCircleV(btn_pos, top_port_radius_btn, logicColor(value));
     }
 
@@ -591,18 +593,18 @@ fn drawLogicGate(gate: *const Module.LogicGate, pos: Vector2, hovered_input: boo
     const bounds_center = re.rectCenter(bounds);
 
     const color = switch (gate.kind) {
-        .@"and" => colors.and_gate,
-        .nand => colors.nand_gate,
-        .@"or" => colors.or_gate,
-        .nor => colors.nor_gate,
-        .xor => colors.xor_gate,
+        .@"and" => theme.and_gate,
+        .nand => theme.nand_gate,
+        .@"or" => theme.or_gate,
+        .nor => theme.nor_gate,
+        .xor => theme.xor_gate,
     };
 
     if (selected)
-        rl.drawRectangleRec(re.rectPad(bounds, selection_pad), colors.selection_border);
+        rl.drawRectangleRec(re.rectPad(bounds, selection_pad), theme.selection_border);
 
     rl.drawRectangleRec(bounds, color);
-    re.drawTextAligned(font, @tagName(gate.kind), bounds_center, consts.font_size, consts.font_spacing, colors.text, .center, .center);
+    re.drawTextAligned(font, @tagName(gate.kind), bounds_center, consts.font_size, consts.font_spacing, theme.text, .center, .center);
 
     for (0..gate.input_cnt) |input| {
         const highlight = hovered_input and hover.child_input.input.logic_gate == input;
@@ -610,14 +612,14 @@ fn drawLogicGate(gate: *const Module.LogicGate, pos: Vector2, hovered_input: boo
         rl.drawCircleV(
             logicGateInputPos(gate, pos, input),
             port_radius,
-            if (highlight) colors.background_alt else colors.port,
+            if (highlight) theme.background_alt else theme.port,
         );
     }
 
     rl.drawCircleV(
         logicGateOutputPos(gate, pos),
         port_radius,
-        if (hovered_output) colors.background_alt else colors.port,
+        if (hovered_output) theme.background_alt else theme.port,
     );
 }
 
@@ -627,21 +629,21 @@ fn drawNotGate(pos: Vector2, hovered_input: bool, hovered_output: bool, selected
     const bounds_center = re.rectCenter(bounds);
 
     if (selected)
-        rl.drawRectangleRec(re.rectPad(bounds, selection_pad), colors.selection_border);
+        rl.drawRectangleRec(re.rectPad(bounds, selection_pad), theme.selection_border);
 
-    rl.drawRectangleRec(bounds, colors.not_gate);
-    re.drawTextAligned(font, "not", bounds_center, consts.font_size, consts.font_spacing, colors.text, .center, .center);
+    rl.drawRectangleRec(bounds, theme.not_gate);
+    re.drawTextAligned(font, "not", bounds_center, consts.font_size, consts.font_spacing, theme.text, .center, .center);
 
     rl.drawCircleV(
         notGateInputPos(pos),
         port_radius,
-        if (hovered_input) colors.background_alt else colors.port,
+        if (hovered_input) theme.background_alt else theme.port,
     );
 
     rl.drawCircleV(
         notGateOutputPos(pos),
         port_radius,
-        if (hovered_output) colors.background_alt else colors.port,
+        if (hovered_output) theme.background_alt else theme.port,
     );
 }
 
@@ -652,7 +654,7 @@ fn drawCustomModule(mod_key: CustomModule.Key, pos: Vector2, hovered_input: bool
     const bounds_center = re.rectCenter(bounds);
 
     if (selected)
-        rl.drawRectangleRec(re.rectPad(bounds, selection_pad), colors.selection_border);
+        rl.drawRectangleRec(re.rectPad(bounds, selection_pad), theme.selection_border);
 
     rl.drawRectangleRec(bounds, mod.color);
 
@@ -663,7 +665,7 @@ fn drawCustomModule(mod_key: CustomModule.Key, pos: Vector2, hovered_input: bool
         rl.drawCircleV(
             customModuleInputPos(mod, pos, input_key),
             port_radius,
-            if (highlight) colors.background_alt else colors.port,
+            if (highlight) theme.background_alt else theme.port,
         );
     }
 
@@ -674,11 +676,11 @@ fn drawCustomModule(mod_key: CustomModule.Key, pos: Vector2, hovered_input: bool
         rl.drawCircleV(
             customModuleOutputPos(mod, pos, output_key),
             port_radius,
-            if (highlight) colors.background_alt else colors.port,
+            if (highlight) theme.background_alt else theme.port,
         );
     }
 
-    re.drawTextAligned(font, mod.name, bounds_center, consts.font_size, consts.font_spacing, colors.text, .center, .center);
+    re.drawTextAligned(font, mod.name, bounds_center, consts.font_size, consts.font_spacing, theme.text, .center, .center);
 }
 
 fn drawChild(self: *const Self, child_key: Child.Key, hover: HoverInfo) void {
@@ -1033,7 +1035,7 @@ fn wireDestPos(self: *const Self, dest: *const WireDest) Vector2 {
 }
 
 inline fn logicColor(value: bool) Color {
-    return if (value) colors.logic_on else colors.logic_off;
+    return if (value) theme.logic_on else theme.logic_off;
 }
 
 inline fn topMod(self: *const Self) *CustomModule {

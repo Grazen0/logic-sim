@@ -5,6 +5,7 @@ const structs = @import("./structs/structs.zig");
 const scenes = @import("./scenes/scenes.zig");
 const consts = @import("./consts.zig");
 const globals = @import("./globals.zig");
+const theme = @import("./theme.zig");
 const GameContext = @import("./GameContext.zig");
 
 const Allocator = std.mem.Allocator;
@@ -54,7 +55,7 @@ pub fn main() anyerror!void {
     defer rl.closeWindow();
 
     rl.setExitKey(.null);
-    rg.loadStyle("./resources/kanagawa.rgs");
+    theme.loadStyle();
     rl.setTargetFPS(60);
 
     var ctx: GameContext = .init();
