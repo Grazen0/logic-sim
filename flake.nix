@@ -2,7 +2,7 @@
   description = "A logic simulator written in Zig and powered by Raylib.";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=68b5fdce2dfce2dc676a13ed7a0bfb483bfda3ee";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
     systems.url = "github:nix-systems/default";
 
