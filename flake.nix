@@ -27,7 +27,7 @@
         }:
         {
           packages = {
-            logic-sim = pkgs.callPackage ./default.nix { };
+            logic-sim = pkgs.callPackage ./. { };
             default = self'.packages.logic-sim;
           };
 
