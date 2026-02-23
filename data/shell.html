@@ -56,36 +56,6 @@
         max-height: 100vh;
       }
     </style>
-    <script
-      type="text/javascript"
-      src="https://cdn.jsdelivr.net/gh/eligrey/FileSaver.js/dist/FileSaver.min.js"
-    ></script>
-    <script type="text/javascript">
-      function saveFileFromMEMFSToDisk(memoryFSname, localFSname) {
-        // This can be called by C/C++ code
-        var isSafari = false; // Not supported, navigator.userAgent access is being restricted
-        //var isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-        var data = FS.readFile(memoryFSname);
-        var blob;
-
-        if (isSafari)
-          blob = new Blob([data.buffer], { type: "application/octet-stream" });
-        else
-          blob = new Blob([data.buffer], { type: "application/octet-binary" });
-
-        // SaveAsDialog is a browser setting. For example, in Google Chrome,
-        // in Settings/Advanced/Downloads section you have a setting:
-        // 'Ask where to save each file before downloading' - which you can set true/false.
-        // If you enable this setting it would always ask you and bring the SaveAsDialog
-        saveAs(blob, localFSname);
-
-        // Alternative implementation to avoid FileSaver.js
-        //const link = document.createElement("a");
-        //link.href = URL.createObjectURL(blob);
-        //link.download = localFSname;
-        //link.click();
-      }
-    </script>
   </head>
   <body>
     <canvas
@@ -97,6 +67,7 @@
     <p id="output" />
     <script>
       var Module = {
+        noInitialRun: true,
         print: (function () {
           var element = document.getElementById("output");
           if (element) element.value = ""; // clear browser cache
@@ -114,6 +85,20 @@
           var canvas = document.getElementById("canvas");
           return canvas;
         })(),
+        onRuntimeInitialized: function () {
+          FS.mkdir("/data");
+          FS.mount(IDBFS, { autoPersist: true }, "/data");
+
+          // seems to be the only call of FS.syncfs required thanks to autoPersist: true
+          FS.syncfs(true, function (err) {
+            if (err) {
+              console.error("Error syncing FS:", err);
+            } else {
+              console.log("FS synced");
+              this.callMain();
+            }
+          });
+        },
       };
     </script>
     {{{ SCRIPT }}}

@@ -12,6 +12,8 @@ const SlotMap = structs.SlotMap;
 const assert = std.debug.assert;
 
 pub const Module = union(enum) {
+    const Self = @This();
+
     pub const LogicGate = struct {
         pub const Kind = enum { @"and", nand, @"or", nor, xor };
 
@@ -19,9 +21,24 @@ pub const Module = union(enum) {
         input_cnt: usize,
     };
 
+    pub const LogicGateSettings = struct {
+        input_cnt: usize,
+    };
+
+    pub const Settings = union(enum) {
+        logic_gate: LogicGateSettings,
+    };
+
     logic_gate: LogicGate,
     not_gate,
     custom: CustomModule.Key,
+
+    pub fn currentSettings(self: *const Self) ?Settings {
+        return switch (self.*) {
+            .logic_gate => |*gate| .{ .logic_gate = .{ .input_cnt = gate.input_cnt } },
+            .not_gate, .custom => null,
+        };
+    }
 };
 
 pub const CustomModule = struct {

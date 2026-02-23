@@ -7,6 +7,7 @@ const consts = @import("./consts.zig");
 const globals = @import("./globals.zig");
 const theme = @import("./theme.zig");
 const GameContext = @import("./GameContext.zig");
+const user_dirs = @import("./user_dirs.zig");
 
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -35,6 +36,8 @@ const Scene = union(enum) {
     }
 };
 
+extern fn emscripten_run_script(ptr: [*c]const u8) void;
+
 pub fn main() anyerror!void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     const alloc = if (consts.web_build) std.heap.c_allocator else gpa.allocator();
@@ -60,6 +63,26 @@ pub fn main() anyerror!void {
 
     var ctx: GameContext = .init();
 
+    const msg = "hello, world\n";
+
+    const filename = try user_dirs.dataDirFile(alloc, "hello.txt");
+    defer alloc.free(filename);
+
+    _ = rl.makeDirectory(rl.getDirectoryPath(filename));
+
+    if (rl.fileExists(filename)) {
+        const read_data = try rl.loadFileData(filename);
+        defer rl.unloadFileData(read_data);
+
+        std.debug.print("read data: {s}\n", .{read_data});
+    } else {
+        const data = try alloc.dupe(u8, msg);
+        defer alloc.free(data);
+
+        std.debug.print("{s} not found. writing...\n", .{filename});
+        _ = rl.saveFileData(filename, data);
+    }
+
     var cur_scene: Scene = .{ .selector = try .init(alloc, &ctx) };
     defer cur_scene.deinit(alloc);
 
@@ -74,7 +97,14 @@ pub fn main() anyerror!void {
             cur_scene.deinit(alloc);
 
             cur_scene = switch (next_scene) {
-                .selector => .{ .selector = try .init(alloc, &ctx) },
+                .selector => |info| blk: {
+                    if (info.delete_mod) |mod_key| {
+                        var removed_mod = globals.modules.remove(mod_key).?;
+                        removed_mod.deinit(alloc);
+                    }
+
+                    break :blk .{ .selector = try .init(alloc, &ctx) };
+                },
                 .editor => |mod_key| .{ .editor = try .init(alloc, &ctx, mod_key) },
             };
         }

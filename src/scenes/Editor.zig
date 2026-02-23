@@ -31,6 +31,7 @@ const Wire = CustomModule.Wire;
 const WireSrc = CustomModule.WireSrc;
 const WireDest = CustomModule.WireDest;
 
+const assert = std.debug.assert;
 const comptimePrint = std.fmt.comptimePrint;
 
 const wire_thick = 5;
@@ -72,7 +73,7 @@ const ModuleSettings = struct {
 
 ctx: *GameContext,
 top_inst: CustomModuleInstance,
-disabled_modules: AutoHashMap(CustomModule.Key, struct {}),
+disabled_modules: AutoHashMap(CustomModule.Key, void),
 mouse_action: union(enum) {
     none,
     drag_module: struct {
@@ -94,11 +95,7 @@ panel_contents_width: f32,
 mod_settings: ?ModuleSettings,
 child_settings: ?struct {
     child_key: Child.Key,
-    v: union {
-        logic_gate: struct {
-            input_cnt: usize,
-        },
-    },
+    v: Module.Settings,
 },
 
 pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self {
@@ -121,7 +118,7 @@ pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self 
     var mod_iter = globals.modules.const_iterator();
     while (mod_iter.nextKey()) |key| {
         if (CustomModule.dependsOn(key, mod_key))
-            try out.disabled_modules.put(key, .{});
+            try out.disabled_modules.put(key, {});
     }
 
     return out;
@@ -137,7 +134,7 @@ pub fn deinit(self: *Self, gpa: Allocator) void {
 pub fn frame(self: *Self, gpa: Allocator) !void {
     rg.unlock();
 
-    if (self.mod_settings != null)
+    if (self.mod_settings != null or self.child_settings != null)
         rg.lock();
 
     const top_mod = self.topMod();
@@ -151,10 +148,10 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     }
 
     rl.clearBackground(theme.background);
-    const snapped_mouse = try self.drawSimulation(gpa, mouse, hover);
+    try self.drawSimulation(gpa, mouse, hover);
 
     if (rl.isMouseButtonPressed(.left)) {
-        try self.onClick(gpa, hover, mouse, snapped_mouse);
+        try self.onClick(gpa, hover, mouse);
     } else if (rl.isMouseButtonReleased(.left)) {
         self.onUnclick();
     }
@@ -165,15 +162,15 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     if (rl.isKeyPressed(consts.escape_key)) {
         if (self.mod_settings) |*settings| {
             try self.closeModSettings(gpa, settings, false);
+        } else if (self.child_settings) |*settings| {
+            try self.closeChildSettings(gpa, settings.child_key, &settings.v, false);
+        } else if (self.mouse_action == .wire_from or self.mouse_action == .wire_to) {
+            self.mouse_action = .none;
+        } else if (self.selection != .none) {
+            self.selection = .none;
         } else {
-            const dragging_wire = self.mouse_action == .wire_from or self.mouse_action == .wire_to;
-
-            if (dragging_wire) {
-                self.mouse_action = .none;
-            } else {
-                self.ctx.next_scene = .selector;
-                return;
-            }
+            self.ctx.next_scene = .{ .selector = .{ .delete_mod = null } };
+            return;
         }
     }
 
@@ -201,6 +198,23 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         rg.unlock();
         try self.drawSettingsMenu(gpa, settings);
     }
+
+    if (self.child_settings) |*settings| {
+        rg.unlock();
+        drawChildSettingsMenu(&settings.v);
+    }
+}
+
+fn drawChildSettingsMenu(settings: *Module.Settings) void {
+    rl.drawRectangle(0, 0, consts.screen_width, consts.screen_height, theme.dim);
+
+    switch (settings.*) {
+        .logic_gate => |*s| drawLogicGateSettingsMenu(s),
+    }
+}
+
+fn drawLogicGateSettingsMenu(settings: *Module.LogicGateSettings) void {
+    _ = settings;
 }
 
 fn removeWire(self: *Self, gpa: Allocator, wire_key: CustomModule.WireKey) !void {
@@ -251,6 +265,17 @@ fn drawSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !voi
 
     const pad = 30;
     const font = rl.getFontDefault() catch unreachable;
+
+    const delete_btn_size = 30;
+    const delete_rect: Rectangle = .init(
+        win_rect.x + win_rect.width - delete_btn_size - pad,
+        win_rect.y + 40,
+        delete_btn_size,
+        delete_btn_size,
+    );
+
+    if (rg.button(delete_rect, comptimePrint("#{d}#", .{IconName.bin})))
+        self.ctx.next_scene = .{ .selector = .{ .delete_mod = self.top_inst.mod_key } };
 
     rl.drawTextEx(font, "Name:", .init(win_rect.x + pad, win_rect.y + 45), 24, 24 * 0.1, theme.text);
 
@@ -324,20 +349,65 @@ fn closeModSettings(self: *Self, gpa: Allocator, settings: *const ModuleSettings
     self.mod_settings = null;
 }
 
+fn closeChildSettings(self: *Self, gpa: Allocator, child_key: Child.Key, settings: *const Module.Settings, save: bool) !void {
+    if (save) {
+        const top_mod = self.topMod();
+        const child = top_mod.children.get(child_key).?;
+        const child_inst = self.top_inst.children.get(child_key).?;
+
+        switch (settings.*) {
+            .logic_gate => |new| try self.saveLogicGateSettings(gpa, child_key, child, child_inst, new),
+        }
+    }
+
+    self.child_settings = null;
+}
+
+fn saveLogicGateSettings(self: *Self, gpa: Allocator, child_key: Child.Key, child: *Child, child_inst: *ModuleInstance, new: Module.LogicGateSettings) !void {
+    const top_mod = self.topMod();
+    const gate = &child.mod.logic_gate;
+    const gate_inst = &child_inst.logic_gate;
+
+    if (new.input_cnt != gate.input_cnt) {
+        if (new.input_cnt < gate.input_cnt) {
+            // Remove wires connected to what we're about to delete
+            var wire_iter = top_mod.wires.const_iterator();
+            while (wire_iter.next()) |entry| {
+                const dest = entry.val.to;
+
+                if (dest == .child_input and dest.child_input.child_key.equals(child_key) and dest.child_input.input.logic_gate >= new.input_cnt)
+                    _ = top_mod.wires.remove(entry.key);
+            }
+
+            gate_inst.inputs.shrinkRetainingCapacity(new.input_cnt);
+        } else {
+            try gate_inst.inputs.appendNTimes(gpa, false, new.input_cnt - gate_inst.inputs.items.len);
+        }
+
+        assert(gate_inst.inputs.items.len == gate.input_cnt);
+        // TODO: propagate within top instance
+        gate_inst.update();
+        gate.input_cnt = new.input_cnt;
+    }
+}
+
 fn openChildSettings(self: *Self, child_key: Child.Key) void {
     const child = self.top_inst.children.get(child_key).?;
 
-    self.child_settings = .{ .child_key = child_key, .v = switch (child.*) {
-        .logic_gate => |*gate| .{ .logic_gate = .{ .input_cnt = gate.inputs.items.len } },
-        .not_gate, .custom => unreachable,
-    } };
+    self.child_settings = .{
+        .child_key = child_key,
+        .v = switch (child.*) {
+            .logic_gate => |*gate| .{ .logic_gate = .{ .input_cnt = gate.inputs.items.len } },
+            .not_gate, .custom => unreachable,
+        },
+    };
 }
 
 fn drawTopBar(self: *Self) void {
     const top_mod = self.topMod();
 
     if (rg.button(.init(15, 10, 40, 40), comptimePrint("#{d}#", .{IconName.arrow_left})))
-        self.ctx.next_scene = .selector;
+        self.ctx.next_scene = .{ .selector = .{ .delete_mod = null } };
 
     if (rg.button(.init(65, 10, 40, 40), comptimePrint("#{d}#", .{IconName.tools})))
         self.openModSettings();
@@ -454,7 +524,7 @@ fn containsChildWithPos(children: *const SlotMap(Child), pos: Vector2) bool {
 }
 
 fn drawWire(self: *const Self, wire: *const Wire, highlight: bool) void {
-    const wire_values = self.top_inst.readWireSrc(wire.from);
+    const wire_values = self.top_inst.readWireSrc(wire.from).?;
     const from_pos = self.wireSrcPos(&wire.from);
     const to_pos = self.wireDestPos(&wire.to);
 
@@ -484,7 +554,7 @@ fn drawWireLines(start: Vector2, end: Vector2, points: []Vector2, thick: f32, co
     rl.drawCircleV(end, thick / 2, color);
 }
 
-fn drawSimulation(self: *const Self, gpa: Allocator, mouse: Vector2, hover: HoverInfo) !Vector2 {
+fn drawSimulation(self: *Self, gpa: Allocator, mouse: Vector2, hover: HoverInfo) !void {
     rl.drawRectangleLinesEx(sim_rect, 2, theme.text_muted);
 
     re.beginScissorModeRec(sim_rect);
@@ -498,28 +568,20 @@ fn drawSimulation(self: *const Self, gpa: Allocator, mouse: Vector2, hover: Hove
         self.drawWire(entry.val, highlight);
     }
 
-    const snap = rl.isKeyDown(.left_shift) or rl.isKeyDown(.right_shift);
+    const snapped_mouse = self.snapMouse(mouse);
 
-    const snapped_mouse: Vector2 = switch (self.mouse_action) {
-        .wire_from => |from| blk: {
-            const from_value = self.top_inst.readWireSrc(from);
+    switch (self.mouse_action) {
+        .wire_from => |from| {
+            const from_value = self.top_inst.readWireSrc(from).?;
             const from_pos = self.wireSrcPos(&from);
-
-            const last_point = self.wire_points.getLastOrNull() orelse from_pos;
-            const snapped_mouse = if (snap) math.snap(last_point, mouse) else mouse;
-
             drawWireLines(from_pos, snapped_mouse, self.wire_points.items, wire_thick, logicColor(from_value));
-            break :blk snapped_mouse;
         },
-        .wire_to => |to| blk: {
+        .wire_to => |to| {
             const to_pos = self.wireDestPos(&to);
-            const last_point = self.wire_points.getLastOrNull() orelse to_pos;
-            const snapped_mouse = if (snap) math.snap(last_point, mouse) else mouse;
             drawWireLines(to_pos, snapped_mouse, self.wire_points.items, wire_thick, logicColor(&.{false}));
-            break :blk snapped_mouse;
         },
-        else => .init(0, 0),
-    };
+        else => {},
+    }
 
     var input_iter = top_mod.inputs.const_iterator();
     while (input_iter.next()) |entry| {
@@ -568,8 +630,25 @@ fn drawSimulation(self: *const Self, gpa: Allocator, mouse: Vector2, hover: Hove
     var child_iter = top_mod.children.const_iterator();
     while (child_iter.nextKey()) |child_key|
         self.drawChild(child_key, hover);
+}
 
-    return snapped_mouse;
+fn snapMouse(self: *const Self, mouse: Vector2) Vector2 {
+    if (!rl.isKeyDown(.left_shift))
+        return mouse;
+
+    switch (self.mouse_action) {
+        .wire_from => |from| {
+            const from_pos = self.wireSrcPos(&from);
+            const last_point = self.wire_points.getLastOrNull() orelse from_pos;
+            return math.snap(last_point, mouse);
+        },
+        .wire_to => |to| {
+            const to_pos = self.wireDestPos(&to);
+            const last_point = self.wire_points.getLastOrNull() orelse to_pos;
+            return math.snap(last_point, mouse);
+        },
+        else => return mouse,
+    }
 }
 
 fn moduleRectangle(pos: Vector2, label: [:0]const u8, ports: usize) Rectangle {
@@ -708,7 +787,7 @@ fn drawCustomModule(mod_key: CustomModule.Key, pos: Vector2, hovered_input: bool
     re.drawTextAligned(font, mod.name, bounds_center, consts.font_size, consts.font_spacing, theme.text, .center, .center);
 }
 
-fn drawChild(self: *const Self, child_key: Child.Key, hover: HoverInfo) void {
+fn drawChild(self: *Self, child_key: Child.Key, hover: HoverInfo) void {
     const top_mod = self.topMod();
     const child = top_mod.children.get(child_key).?;
 
@@ -722,6 +801,28 @@ fn drawChild(self: *const Self, child_key: Child.Key, hover: HoverInfo) void {
         .logic_gate => |*gate| drawLogicGate(gate, child.pos, hovered_input, hovered_output, hover, selected),
         .not_gate => drawNotGate(child.pos, hovered_input, hovered_output, selected),
         .custom => |mod_key| drawCustomModule(mod_key, child.pos, hovered_input, hovered_output, hover, selected),
+    }
+
+    if (selected) {
+        const cur_settings = child.mod.currentSettings();
+        if (cur_settings) |cur_settings_v| {
+            const bounds = childBounds(child);
+
+            const btn_size = 30;
+            const btn_rect: Rectangle = .init(
+                bounds.x + bounds.width + 15,
+                bounds.y - btn_size - 10,
+                btn_size,
+                btn_size,
+            );
+
+            if (rg.button(btn_rect, comptimePrint("#{d}#", .{IconName.gear}))) {
+                self.child_settings = .{
+                    .child_key = child_key,
+                    .v = cur_settings_v,
+                };
+            }
+        }
     }
 }
 
@@ -738,8 +839,9 @@ fn addWire(self: *Self, gpa: Allocator, wire: Wire) !void {
     self.mouse_action = .none;
 }
 
-fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snapped_mouse: Vector2) !void {
+fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2) !void {
     const top_mod = self.topMod();
+    const snapped_mouse = self.snapMouse(mouse);
 
     switch (self.mouse_action) {
         .wire_from => |from| switch (hover) {
@@ -753,13 +855,13 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snappe
             },
             else => try self.wire_points.append(gpa, snapped_mouse),
         },
-        .wire_to => |to| blk: {
+        .wire_to => |to| {
             var points_rev = try self.wire_points.clone(gpa);
             defer points_rev.deinit(gpa);
 
             std.mem.reverse(Vector2, points_rev.items);
 
-            break :blk switch (hover) {
+            switch (hover) {
                 .child_output => |info| {
                     const new_wire: Wire = try .init(gpa, .{ .child_output = info }, to, points_rev.items);
                     try self.addWire(gpa, new_wire);
@@ -769,12 +871,10 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2, snappe
                     try self.addWire(gpa, new_wire);
                 },
                 else => try self.wire_points.append(gpa, snapped_mouse),
-            };
+            }
         },
         .drag_module => {},
         .none => {
-            self.selection = .none;
-
             switch (hover) {
                 .none => {},
                 .top_input_btn => |input_key| {

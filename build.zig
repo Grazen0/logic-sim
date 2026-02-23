@@ -40,8 +40,12 @@ pub fn build(b: *std.Build) !void {
         });
 
         const install_dir: std.Build.InstallDir = .{ .custom = "web" };
-        const emcc_flags = emsdk.emccDefaultFlags(b.allocator, .{ .optimize = optimize });
-        const emcc_settings = emsdk.emccDefaultSettings(b.allocator, .{ .optimize = optimize });
+        var emcc_flags = emsdk.emccDefaultFlags(b.allocator, .{ .optimize = optimize });
+        var emcc_settings = emsdk.emccDefaultSettings(b.allocator, .{ .optimize = optimize });
+
+        try emcc_flags.put("-lidbfs.js", {});
+        try emcc_settings.put("FORCE_FILESYSTEM", "1");
+        try emcc_settings.put("EXPORTED_RUNTIME_METHODS", "['FS', 'callMain']");
 
         const emcc_step = emsdk.emccStep(b, raylib_artifact, wasm, .{
             .optimize = optimize,
@@ -51,6 +55,7 @@ pub fn build(b: *std.Build) !void {
             .install_dir = install_dir,
             // .embed_paths = &.{.{ .src_path = "resources/" }},
         });
+
         b.getInstallStep().dependOn(emcc_step);
 
         const html_filename = try std.fmt.allocPrint(b.allocator, "{s}.html", .{wasm.name});

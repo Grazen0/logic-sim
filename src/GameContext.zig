@@ -9,7 +9,9 @@ const SlotMap = structs.SlotMap;
 const CustomModule = core.CustomModule;
 
 pub const NextScene = union(enum) {
-    selector,
+    selector: struct {
+        delete_mod: ?CustomModule.Key,
+    },
     editor: CustomModule.Key,
 };
 
