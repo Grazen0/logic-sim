@@ -41,7 +41,6 @@ pub const ModuleInstance = union(enum) {
 
         pub fn deinit(self: *@This(), gpa: Allocator) void {
             self.inputs.deinit(gpa);
-
             self.* = undefined;
         }
 
