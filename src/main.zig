@@ -63,25 +63,7 @@ pub fn main() anyerror!void {
 
     var ctx: GameContext = .init();
 
-    const msg = "hello, world\n";
-
-    const filename = try user_dirs.dataDirFile(alloc, "hello.txt");
-    defer alloc.free(filename);
-
-    _ = rl.makeDirectory(rl.getDirectoryPath(filename));
-
-    if (rl.fileExists(filename)) {
-        const read_data = try rl.loadFileData(filename);
-        defer rl.unloadFileData(read_data);
-
-        std.debug.print("read data: {s}\n", .{read_data});
-    } else {
-        const data = try alloc.dupe(u8, msg);
-        defer alloc.free(data);
-
-        std.debug.print("{s} not found. writing...\n", .{filename});
-        _ = rl.saveFileData(filename, data);
-    }
+    try globals.loadCustomModules(alloc);
 
     var cur_scene: Scene = .{ .selector = try .init(alloc, &ctx) };
     defer cur_scene.deinit(alloc);
@@ -109,4 +91,6 @@ pub fn main() anyerror!void {
             };
         }
     }
+
+    try globals.saveCustomModules(alloc);
 }

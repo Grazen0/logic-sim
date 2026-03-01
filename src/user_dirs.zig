@@ -25,7 +25,7 @@ pub fn dataDir(gpa: Allocator) ![]u8 {
     };
 }
 
-pub fn dataDirFile(gpa: Allocator, comptime filename: []const u8) ![:0]u8 {
+pub fn dataDirFileZ(gpa: Allocator, comptime filename: []const u8) ![:0]u8 {
     const data_dir = try dataDir(gpa);
     defer gpa.free(data_dir);
 
