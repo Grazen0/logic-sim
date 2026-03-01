@@ -35,8 +35,6 @@ pub fn SlotMap(comptime T: type) type {
 
         fn Iter(comptime S: type, comptime V: type) type {
             return struct {
-                const SelfIter = @This();
-
                 slot_map: S,
                 idx: usize,
 
@@ -45,7 +43,11 @@ pub fn SlotMap(comptime T: type) type {
                     val: V,
                 };
 
-                pub fn next(self: *SelfIter) ?Entry {
+                pub fn reset(self: *@This()) void {
+                    self.idx = 0;
+                }
+
+                pub fn next(self: *@This()) ?Entry {
                     while (self.idx < self.slot_map.slots.items.len) {
                         defer self.idx += 1;
                         const slot = &self.slot_map.slots.items[self.idx];
@@ -61,7 +63,7 @@ pub fn SlotMap(comptime T: type) type {
                     return null;
                 }
 
-                pub fn nextKey(self: *SelfIter) ?Key {
+                pub fn nextKey(self: *@This()) ?Key {
                     while (self.idx < self.slot_map.slots.items.len) {
                         defer self.idx += 1;
                         const slot = &self.slot_map.slots.items[self.idx];
@@ -73,7 +75,7 @@ pub fn SlotMap(comptime T: type) type {
                     return null;
                 }
 
-                pub fn nextValue(self: *SelfIter) ?V {
+                pub fn nextValue(self: *@This()) ?V {
                     while (self.idx < self.slot_map.slots.items.len) {
                         defer self.idx += 1;
                         const slot = &self.slot_map.slots.items[self.idx];
@@ -91,8 +93,6 @@ pub fn SlotMap(comptime T: type) type {
         pub const Iterator = Iter(*Self, *T);
 
         pub const ReverseIterator = struct {
-            const SelfIter = @This();
-
             slot_map: *SlotMap(T),
             idx: usize,
 
@@ -101,7 +101,7 @@ pub fn SlotMap(comptime T: type) type {
                 val: *T,
             };
 
-            pub fn next(self: *SelfIter) ?Entry {
+            pub fn next(self: *@This()) ?Entry {
                 while (self.idx > 0) {
                     self.idx -= 1;
                     const slot = &self.slot_map.slots.items[self.idx];
@@ -117,7 +117,7 @@ pub fn SlotMap(comptime T: type) type {
                 return null;
             }
 
-            pub fn nextKey(self: *SelfIter) ?Key {
+            pub fn nextKey(self: *@This()) ?Key {
                 while (self.idx > 0) {
                     self.idx -= 1;
                     const slot = &self.slot_map.slots.items[self.idx];
@@ -129,7 +129,7 @@ pub fn SlotMap(comptime T: type) type {
                 return null;
             }
 
-            pub fn nextValue(self: *SelfIter) ?*T {
+            pub fn nextValue(self: *@This()) ?*T {
                 while (self.idx > 0) {
                     self.idx -= 1;
                     const slot = &self.slot_map.slots.items[self.idx];
@@ -332,14 +332,16 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
 
         fn Iter(comptime S: type, comptime V: type) type {
             return struct {
-                const SelfIter = @This();
-
                 map: S,
                 idx: usize,
 
                 pub const Entry = struct { key: K, val: V };
 
-                pub fn next(self: *SelfIter) ?Entry {
+                pub fn reset(self: *@This()) void {
+                    self.idx = 0;
+                }
+
+                pub fn next(self: *@This()) ?Entry {
                     while (self.idx < self.map.slots.items.len) {
                         defer self.idx += 1;
                         const slot = &self.map.slots.items[self.idx];
@@ -356,7 +358,7 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
                     return null;
                 }
 
-                pub fn nextKey(self: *SelfIter) ?K {
+                pub fn nextKey(self: *@This()) ?K {
                     while (self.idx < self.map.slots.items.len) {
                         defer self.idx += 1;
                         const slot = &self.map.slots.items[self.idx];
@@ -370,7 +372,7 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
                     return null;
                 }
 
-                pub fn nextValue(self: *SelfIter) ?V {
+                pub fn nextValue(self: *@This()) ?V {
                     while (self.idx < self.map.slots.items.len) {
                         defer self.idx += 1;
                         const slot = &self.map.slots.items[self.idx];
