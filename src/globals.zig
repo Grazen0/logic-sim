@@ -303,6 +303,8 @@ fn modulesFilename(gpa: Allocator) ![:0]u8 {
 }
 
 pub fn saveCustomModules(gpa: Allocator) !void {
+    std.log.info("Saving modules...", .{});
+
     const filename = try modulesFilename(gpa);
     defer gpa.free(filename);
 

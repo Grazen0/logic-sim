@@ -189,6 +189,8 @@ fn confirmCreateModule(self: *Self, gpa: Allocator) !void {
 
     const new_mod_key = try globals.modules.put(gpa, new_mod);
     self.ctx.next_scene = .{ .editor = new_mod_key };
+
+    try globals.saveCustomModules(gpa);
 }
 
 fn computeModList(self: *Self, gpa: Allocator) !void {

@@ -153,7 +153,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     if (rl.isMouseButtonPressed(.left)) {
         try self.onClick(gpa, hover, mouse);
     } else if (rl.isMouseButtonReleased(.left)) {
-        self.onUnclick();
+        try self.onUnclick(gpa);
     }
 
     if (rl.isMouseButtonPressed(.right))
@@ -229,6 +229,7 @@ fn removeWire(self: *Self, gpa: Allocator, wire_key: CustomModule.WireKey) !void
     @memset(false_values, false);
 
     try self.top_inst.writeWireDestUpdate(gpa, wire.to, false_values);
+    try globals.saveCustomModules(gpa);
 }
 
 fn removeChild(self: *Self, gpa: Allocator, child_key: Child.Key) !void {
@@ -247,6 +248,7 @@ fn removeChild(self: *Self, gpa: Allocator, child_key: Child.Key) !void {
 
     _ = top_mod.children.remove(child_key);
     _ = self.top_inst.children.remove(child_key);
+    try globals.saveCustomModules(gpa);
 }
 
 fn drawSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !void {
@@ -274,8 +276,10 @@ fn drawSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !voi
         delete_btn_size,
     );
 
-    if (rg.button(delete_rect, comptimePrint("#{d}#", .{IconName.bin})))
+    if (rg.button(delete_rect, comptimePrint("#{d}#", .{IconName.bin}))) {
         self.ctx.next_scene = .{ .selector = .{ .delete_mod = self.top_inst.mod_key } };
+        try globals.saveCustomModules(gpa);
+    }
 
     rl.drawTextEx(font, "Name:", .init(win_rect.x + pad, win_rect.y + 45), 24, 24 * 0.1, theme.text);
 
@@ -467,6 +471,8 @@ fn addChildModule(self: *Self, gpa: Allocator, child_v: Module) !void {
     _ = try self.top_inst.children.put(gpa, child_key, child_inst);
 
     self.selection = .{ .child = child_key };
+
+    try globals.saveCustomModules(gpa);
 }
 
 fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
@@ -837,6 +843,8 @@ fn addWire(self: *Self, gpa: Allocator, wire: Wire) !void {
     }
 
     self.mouse_action = .none;
+
+    try globals.saveCustomModules(gpa);
 }
 
 fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2) !void {
@@ -925,9 +933,12 @@ fn onRightClick(self: *Self) void {
     }
 }
 
-fn onUnclick(self: *Self) void {
+fn onUnclick(self: *Self, gpa: Allocator) !void {
     switch (self.mouse_action) {
-        .drag_module => self.mouse_action = .none,
+        .drag_module => {
+            self.mouse_action = .none;
+            try globals.saveCustomModules(gpa);
+        },
         else => {},
     }
 }
