@@ -133,7 +133,7 @@ pub const CustomModule = struct {
         points: []Vector2,
         to: WireDest,
 
-        pub fn init(gpa: Allocator, from: WireSrc, to: WireDest, points: []Vector2) !@This() {
+        pub fn init(gpa: Allocator, from: WireSrc, to: WireDest, points: []const Vector2) !@This() {
             return .{
                 .from = from,
                 .to = to,
