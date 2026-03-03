@@ -18,20 +18,7 @@ pub var modules: SlotMap(CustomModule) = .empty;
 pub const ModuleJson = union(enum) {
     const Self = @This();
 
-    pub const LogicGate = struct {
-        kind: Module.LogicGate.Kind,
-        input_cnt: usize,
-    };
-
-    pub const LogicGateSettings = struct {
-        input_cnt: usize,
-    };
-
-    pub const Settings = union(enum) {
-        logic_gate: LogicGateSettings,
-    };
-
-    logic_gate: LogicGate,
+    logic_gate: Module.LogicGate,
     not_gate,
     custom: usize,
 };
@@ -39,20 +26,8 @@ pub const ModuleJson = union(enum) {
 const CustomModuleJson = struct {
     const Self = @This();
 
-    const Input = struct {
-        name: ?[]u8,
-        width: usize,
-        pos: f32,
-    };
-
-    const Output = struct {
-        name: ?[]u8,
-        width: usize,
-        pos: f32,
-    };
-
     pub const Child = struct {
-        pos: [2]f32,
+        pos: Vector2,
         mod: ModuleJson,
     };
 
@@ -82,7 +57,7 @@ const CustomModuleJson = struct {
 
     pub const Wire = struct {
         from: WireSrc,
-        points: [][2]f32,
+        points: []Vector2,
         to: WireDest,
 
         pub fn deinit(self: @This(), gpa: Allocator) void {
@@ -92,8 +67,8 @@ const CustomModuleJson = struct {
 
     name: []u8,
     color: u32,
-    inputs: []Input,
-    outputs: []Output,
+    inputs: []CustomModule.Input,
+    outputs: []CustomModule.Output,
     children: []Child,
     wires: []Wire,
 
@@ -174,7 +149,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
         const output_idxs = output_idxs_all.get(mod_key).?;
         const input_idxs = input_idxs_all.get(mod_key).?;
 
-        var inputs_json = try gpa.alloc(CustomModuleJson.Input, mod.inputs.size);
+        var inputs_json = try gpa.alloc(CustomModule.Input, mod.inputs.size);
         var inputs_iter = mod.inputs.const_iterator();
 
         while (inputs_iter.next()) |entry| {
@@ -183,13 +158,13 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
             const idx = input_idxs.get(input_key).?.*;
 
             inputs_json[idx] = .{
-                .name = if (input.name) |name| try gpa.dupe(u8, name) else null,
+                .name = if (input.name) |name| try gpa.dupeZ(u8, name) else null,
                 .pos = input.pos,
                 .width = input.width,
             };
         }
 
-        var outputs_json = try gpa.alloc(CustomModuleJson.Output, mod.outputs.size);
+        var outputs_json = try gpa.alloc(CustomModule.Output, mod.outputs.size);
         var outputs_iter = mod.outputs.const_iterator();
 
         while (outputs_iter.next()) |entry| {
@@ -198,7 +173,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
             const idx = output_idxs.get(output_key).?.*;
 
             outputs_json[idx] = .{
-                .name = if (output.name) |name| try gpa.dupe(u8, name) else null,
+                .name = if (output.name) |name| try gpa.dupeZ(u8, name) else null,
                 .pos = output.pos,
                 .width = output.width,
             };
@@ -217,19 +192,13 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
 
             _ = try child_idxs.put(gpa, child_key, i);
 
-            const child_mod_json: ModuleJson = switch (child.mod) {
-                .logic_gate => |*gate| .{
-                    .logic_gate = .{
-                        .kind = gate.kind,
-                        .input_cnt = gate.input_cnt,
-                    },
-                },
-                .not_gate => .not_gate,
-                .custom => |mkey| .{ .custom = mod_idxs.get(mkey).?.* },
-            };
             children_json[i] = .{
-                .pos = .{ child.pos.x, child.pos.y },
-                .mod = child_mod_json,
+                .pos = child.pos,
+                .mod = switch (child.mod) {
+                    .logic_gate => |gate| .{ .logic_gate = gate },
+                    .not_gate => .not_gate,
+                    .custom => |mkey| .{ .custom = mod_idxs.get(mkey).?.* },
+                },
             };
         }
 
@@ -239,11 +208,6 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
         i = 0;
 
         while (wire_iter.nextValue()) |wire| : (i += 1) {
-            var points_json = try gpa.alloc([2]f32, wire.points.len);
-
-            for (0.., wire.points) |j, point|
-                points_json[j] = .{ point.x, point.y };
-
             wires_json[i] = .{
                 .from = switch (wire.from) {
                     .top_input => |input_key| .{ .top_input = input_idxs.get(input_key).?.* },
@@ -279,7 +243,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
                         },
                     },
                 },
-                .points = points_json,
+                .points = try gpa.dupe(Vector2, wire.points),
             };
         }
 
@@ -303,8 +267,6 @@ fn modulesFilename(gpa: Allocator) ![:0]u8 {
 }
 
 pub fn saveCustomModules(gpa: Allocator) !void {
-    std.log.info("Saving modules...", .{});
-
     const filename = try modulesFilename(gpa);
     defer gpa.free(filename);
 
@@ -336,7 +298,7 @@ pub fn loadCustomModules(gpa: Allocator) !void {
     std.log.info("Modules file found. Loading custom modules...", .{});
 
     const data_str = try rl.loadFileData(filename);
-    const parsed = try std.json.parseFromSlice([]CustomModuleJson, gpa, data_str, .{});
+    const parsed = try std.json.parseFromSlice([]CustomModuleJson, gpa, data_str, .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
 
     const mods_json: []CustomModuleJson = parsed.value;
@@ -395,14 +357,9 @@ pub fn loadCustomModules(gpa: Allocator) !void {
 
         for (0.., mod_json.children) |j, child_json| {
             const child: CustomModule.Child = .{
-                .pos = .init(child_json.pos[0], child_json.pos[1]),
+                .pos = child_json.pos,
                 .mod = switch (child_json.mod) {
-                    .logic_gate => |gate| .{
-                        .logic_gate = .{
-                            .kind = gate.kind,
-                            .input_cnt = gate.input_cnt,
-                        },
-                    },
+                    .logic_gate => |gate| .{ .logic_gate = gate },
                     .not_gate => .not_gate,
                     .custom => |mod_idx| .{ .custom = mod_keys[mod_idx] },
                 },
@@ -414,11 +371,6 @@ pub fn loadCustomModules(gpa: Allocator) !void {
         var wires: SlotMap(CustomModule.Wire) = try .initCapacity(gpa, mod_json.wires.len);
 
         for (mod_json.wires) |wire_json| {
-            const points = try gpa.alloc(Vector2, wire_json.points.len);
-
-            for (0.., wire_json.points) |j, p|
-                points[j] = .init(p[0], p[1]);
-
             const wire: CustomModule.Wire = .{
                 .from = switch (wire_json.from) {
                     .top_input => |input_idx| .{ .top_input = input_keys[input_idx] },
@@ -454,7 +406,7 @@ pub fn loadCustomModules(gpa: Allocator) !void {
                         },
                     },
                 },
-                .points = points,
+                .points = try gpa.dupe(Vector2, wire_json.points),
             };
 
             _ = try wires.put(gpa, wire);

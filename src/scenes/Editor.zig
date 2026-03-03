@@ -101,7 +101,7 @@ child_settings: ?struct {
 pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self {
     var out: Self = .{
         .ctx = ctx,
-        .top_inst = try .fromModuleNoUpdate(gpa, mod_key),
+        .top_inst = try .fromCustomModule(gpa, mod_key),
         .disabled_modules = .init(gpa),
         .mouse_action = .none,
         .wire_points = .empty,
@@ -112,8 +112,6 @@ pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self 
         .mod_settings = null,
         .child_settings = null,
     };
-
-    try out.top_inst.update(gpa);
 
     var mod_iter = globals.modules.const_iterator();
     while (mod_iter.nextKey()) |key| {
@@ -203,6 +201,11 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         rg.unlock();
         drawChildSettingsMenu(&settings.v);
     }
+
+    const logic_time_per_frame = 256;
+
+    const affected_outputs = try self.top_inst.simulate(gpa, logic_time_per_frame);
+    defer gpa.free(affected_outputs);
 }
 
 fn drawChildSettingsMenu(settings: *Module.Settings) void {
@@ -219,8 +222,8 @@ fn drawLogicGateSettingsMenu(settings: *Module.LogicGateSettings) void {
 
 fn removeWire(self: *Self, gpa: Allocator, wire_key: CustomModule.WireKey) !void {
     const top_mod = self.topMod();
-    const wire = top_mod.wires.get(wire_key).?;
-    _ = top_mod.wires.remove(wire_key);
+    var wire = top_mod.wires.remove(wire_key).?;
+    wire.deinit(gpa);
 
     const wire_width = top_mod.wireDestWidth(wire.to);
     const false_values = try gpa.alloc(bool, wire_width);
@@ -228,7 +231,7 @@ fn removeWire(self: *Self, gpa: Allocator, wire_key: CustomModule.WireKey) !void
 
     @memset(false_values, false);
 
-    try self.top_inst.writeWireDestUpdate(gpa, wire.to, false_values);
+    try self.top_inst.writeWireDest(gpa, wire.to, false_values, self.top_inst.time);
     try globals.saveCustomModules(gpa);
 }
 
@@ -246,8 +249,11 @@ fn removeChild(self: *Self, gpa: Allocator, child_key: Child.Key) !void {
             try self.removeWire(gpa, entry.key);
     }
 
-    _ = top_mod.children.remove(child_key);
-    _ = self.top_inst.children.remove(child_key);
+    var child_inst = self.top_inst.children.remove(child_key).?;
+    child_inst.deinit(gpa);
+
+    _ = top_mod.children.remove(child_key).?;
+
     try globals.saveCustomModules(gpa);
 }
 
@@ -365,6 +371,7 @@ fn closeChildSettings(self: *Self, gpa: Allocator, child_key: Child.Key, setting
     }
 
     self.child_settings = null;
+    try globals.saveCustomModules(gpa);
 }
 
 fn saveLogicGateSettings(self: *Self, gpa: Allocator, child_key: Child.Key, child: *Child, child_inst: *ModuleInstance, new: Module.LogicGateSettings) !void {
@@ -530,7 +537,7 @@ fn containsChildWithPos(children: *const SlotMap(Child), pos: Vector2) bool {
 }
 
 fn drawWire(self: *const Self, wire: *const Wire, highlight: bool) void {
-    const wire_values = self.top_inst.readWireSrc(wire.from).?;
+    const wire_values = self.top_inst.readWireSrc(wire.from);
     const from_pos = self.wireSrcPos(&wire.from);
     const to_pos = self.wireDestPos(&wire.to);
 
@@ -578,7 +585,7 @@ fn drawSimulation(self: *Self, gpa: Allocator, mouse: Vector2, hover: HoverInfo)
 
     switch (self.mouse_action) {
         .wire_from => |from| {
-            const from_value = self.top_inst.readWireSrc(from).?;
+            const from_value = self.top_inst.readWireSrc(from);
             const from_pos = self.wireSrcPos(&from);
             drawWireLines(from_pos, snapped_mouse, self.wire_points.items, wire_thick, logicColor(from_value));
         },
@@ -838,7 +845,9 @@ fn addWire(self: *Self, gpa: Allocator, wire: Wire) !void {
     // Only create wire if port widths match
     if (top_mod.wireSrcWidth(wire.from) == top_mod.wireDestWidth(wire.to)) {
         const new_wire_key = try top_mod.addWireOrModifyExisting(gpa, wire);
-        try self.top_inst.updateFromSrcsVoid(gpa, &.{wire.from});
+        const from_values = self.top_inst.readWireSrc(wire.from);
+
+        try self.top_inst.writeWireDest(gpa, wire.to, from_values, self.top_inst.time);
         self.selection = .{ .wire = new_wire_key };
     }
 
@@ -886,13 +895,14 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2) !void 
             switch (hover) {
                 .none => {},
                 .top_input_btn => |input_key| {
-                    const prev_values = self.top_inst.inputs.get(input_key).?.*;
-                    const dest_values = self.top_inst.inputs.get(input_key).?.*;
+                    const input = self.top_inst.inputs.get(input_key).?.*;
+                    const new_values = try gpa.alloc(bool, input.len);
+                    defer gpa.free(new_values);
 
-                    for (0.., prev_values) |i, v|
-                        dest_values[i] = !v;
+                    for (0.., input) |i, v|
+                        new_values[i] = !v;
 
-                    try self.top_inst.updateFromSrcsVoid(gpa, &.{.{ .top_input = input_key }});
+                    try self.top_inst.writeInput(gpa, input_key, new_values, self.top_inst.time);
                 },
                 .top_input_pin => |input_key| {
                     self.mouse_action = .{ .wire_from = .{ .top_input = input_key } };
