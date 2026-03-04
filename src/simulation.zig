@@ -89,7 +89,7 @@ pub const ModuleInstance = union(enum) {
         }
     }
 
-    pub fn readOutput(self: *const Self, output: CustomModule.ChildOutput.O) []const bool {
+    pub fn readOutput(self: *const Self, output: CustomModule.ChildOutputRef.OutputRef) []const bool {
         return switch (self.*) {
             .logic_gate => |*gate_inst| @as(*const [1]bool, @ptrCast(&gate_inst.output)),
             .not_gate => |*gate_inst| @as(*const [1]bool, @ptrCast(&gate_inst.out)),
@@ -131,7 +131,6 @@ pub const CustomModuleInstance = struct {
     inputs: SecondaryMap(CustomModule.InputKey, []bool),
     outputs: SecondaryMap(CustomModule.OutputKey, []bool),
     children: SecondaryMap(CustomModule.Child.Key, ModuleInstance),
-    time: u64,
     queue: PriorityQueue(QueueEntry, void, QueueEntry.cmp),
 
     pub fn fromCustomModule(gpa: Allocator, mod_key: CustomModule.Key) !Self {
@@ -142,7 +141,6 @@ pub const CustomModuleInstance = struct {
             .inputs = .empty,
             .outputs = .empty,
             .children = .empty,
-            .time = 0,
             .queue = .init(gpa, {}),
         };
 
@@ -172,7 +170,7 @@ pub const CustomModuleInstance = struct {
             while (wire_iter.nextValue()) |wire| {
                 if (wire.from == .child_output and wire.from.child_output.child_key.equals(child_key)) {
                     const from_values = out.readWireSrc(wire.from);
-                    try out.writeWireDest(gpa, wire.to, from_values, out.time);
+                    try out.writeWireDest(gpa, wire.to, from_values, 0);
                 }
             }
         }
@@ -209,22 +207,83 @@ pub const CustomModuleInstance = struct {
         output_key: CustomModule.OutputKey,
     };
 
-    pub fn simulate(self: *Self, gpa: Allocator, process_time: u64) ![]AffectedOutput {
-        self.time += process_time;
+    fn writeChildInput(self: *Self, gpa: Allocator, ref: CustomModule.ChildInputRef, src_values: []const bool, time: u64) !void {
+        if (self.children.get(ref.child_key)) |child_inst| {
+            switch (child_inst.*) {
+                .logic_gate => |*gate_inst| {
+                    assert(src_values.len == 1);
 
+                    if (gate_inst.inputs.items[ref.input.logic_gate] != src_values[0]) {
+                        gate_inst.inputs.items[ref.input.logic_gate] = src_values[0];
+
+                        const prev_output = gate_inst.output;
+                        gate_inst.update();
+
+                        if (gate_inst.output != prev_output) {
+                            const gate_delay = 10;
+
+                            try self.propagateFromWireSrc(gpa, .{
+                                .child_output = .{
+                                    .child_key = ref.child_key,
+                                    .output = .logic_gate,
+                                },
+                            }, time + gate_delay);
+                        }
+                    }
+                },
+                .not_gate => |*gate_inst| {
+                    assert(src_values.len == 1);
+
+                    if (gate_inst.in != src_values[0]) {
+                        gate_inst.in = src_values[0];
+                        gate_inst.update();
+
+                        const gate_delay = 5;
+
+                        try self.propagateFromWireSrc(gpa, .{
+                            .child_output = .{
+                                .child_key = ref.child_key,
+                                .output = .not_gate,
+                            },
+                        }, time + gate_delay);
+                    }
+                },
+                .custom => |*custom_inst| try custom_inst.writeInput(gpa, ref.input.custom, src_values, time),
+            }
+        }
+    }
+
+    fn simulateChild(self: *Self, gpa: Allocator, child_key: CustomModule.Child.Key, max_time: u64) !void {
+        const child_inst = self.children.get(child_key).?;
+        if (child_inst.* != .custom)
+            return;
+
+        const child_affected = try child_inst.custom.simulate(gpa, max_time);
+        defer gpa.free(child_affected);
+
+        for (child_affected) |affected| {
+            try self.propagateFromWireSrc(gpa, .{
+                .child_output = .{
+                    .child_key = child_key,
+                    .output = .{ .custom = affected.output_key },
+                },
+            }, affected.time);
+        }
+    }
+
+    pub fn simulate(self: *Self, gpa: Allocator, process_time: u64) error{OutOfMemory}![]AffectedOutput {
         var affected_outputs: ArrayList(AffectedOutput) = .empty;
 
         while (self.queue.peek()) |*entry_peek| {
-            if (entry_peek.time >= self.time)
+            if (entry_peek.time >= process_time)
                 break;
 
             var entry = self.queue.remove();
             defer entry.deinit(gpa);
 
-            const dest = entry.dest;
             const src_values = entry.src_values;
 
-            switch (dest) {
+            switch (entry.dest) {
                 .top_output => |output_key| {
                     const output = self.outputs.get(output_key).?.*;
 
@@ -236,76 +295,22 @@ pub const CustomModuleInstance = struct {
                         });
                     }
                 },
-                .child_input => |input_info| {
-                    if (self.children.get(input_info.child_key)) |child_inst| {
-                        switch (child_inst.*) {
-                            .logic_gate => |*gate_inst| {
-                                assert(src_values.len == 1);
-                                gate_inst.inputs.items[input_info.input.logic_gate] = src_values[0];
-
-                                const prev_output = gate_inst.output;
-                                gate_inst.update();
-
-                                if (gate_inst.output != prev_output) {
-                                    const gate_delay = 10;
-
-                                    try self.propagateFromWireSrc(gpa, .{
-                                        .child_output = .{
-                                            .child_key = input_info.child_key,
-                                            .output = .logic_gate,
-                                        },
-                                    }, entry.time + gate_delay);
-                                }
-                            },
-                            .not_gate => |*gate_inst| {
-                                assert(src_values.len == 1);
-
-                                if (gate_inst.in != src_values[0]) {
-                                    gate_inst.in = src_values[0];
-                                    gate_inst.update();
-
-                                    const gate_delay = 5;
-
-                                    try self.propagateFromWireSrc(gpa, .{
-                                        .child_output = .{
-                                            .child_key = input_info.child_key,
-                                            .output = .not_gate,
-                                        },
-                                    }, entry.time + gate_delay);
-                                }
-                            },
-                            .custom => |*custom_inst| try custom_inst.writeInput(gpa, input_info.input.custom, src_values, entry.time),
-                        }
-                    }
-                },
+                .child_input => |ref| try self.writeChildInput(gpa, ref, src_values, entry.time),
             }
         }
 
         var children_iter = self.children.iterator();
-        while (children_iter.next()) |entry| {
-            const child_key = entry.key;
-            const child_inst = entry.val;
+        while (children_iter.nextKey()) |child_key|
+            try self.simulateChild(gpa, child_key, process_time);
 
-            if (child_inst.* != .custom)
-                continue;
-
-            const child_affected = try child_inst.custom.simulate(gpa, process_time);
-            defer gpa.free(child_affected);
-
-            for (child_affected) |affected| {
-                try self.propagateFromWireSrc(gpa, .{
-                    .child_output = .{
-                        .child_key = child_key,
-                        .output = .{ .custom = affected.output_key },
-                    },
-                }, affected.time);
-            }
-        }
+        // Note that this doesn't affect the order of priorities within the queue
+        for (self.queue.items) |*entry|
+            entry.time -= process_time;
 
         return try affected_outputs.toOwnedSlice(gpa);
     }
 
-    fn propagateFromWireSrc(self: *Self, gpa: Allocator, src: WireSrc, time: u64) !void {
+    pub fn propagateFromWireSrc(self: *Self, gpa: Allocator, src: WireSrc, time: u64) !void {
         const self_mod = globals.modules.get(self.mod_key).?;
         const values = self.readWireSrc(src);
 
@@ -318,17 +323,19 @@ pub const CustomModuleInstance = struct {
 
     pub fn writeInput(self: *Self, gpa: Allocator, input_key: CustomModule.InputKey, values: []const bool, time: u64) !void {
         const input_values = self.inputs.get(input_key).?.*;
-        @memcpy(input_values, values);
 
-        try self.propagateFromWireSrc(gpa, .{ .top_input = input_key }, time);
+        if (!std.mem.eql(bool, input_values, values)) {
+            @memcpy(input_values, values);
+            try self.propagateFromWireSrc(gpa, .{ .top_input = input_key }, time);
+        }
     }
 
     pub fn readWireSrc(self: *const Self, src: WireSrc) []const bool {
         return switch (src) {
             .top_input => |input_key| self.inputs.get(input_key).?.*,
-            .child_output => |keys| blk: {
-                const child = self.children.get(keys.child_key).?;
-                break :blk child.readOutput(keys.output);
+            .child_output => |ref| blk: {
+                const child = self.children.get(ref.child_key).?;
+                break :blk child.readOutput(ref.output);
             },
         };
     }

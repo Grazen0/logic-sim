@@ -211,14 +211,14 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
             wires_json[i] = .{
                 .from = switch (wire.from) {
                     .top_input => |input_key| .{ .top_input = input_idxs.get(input_key).?.* },
-                    .child_output => |keys| .{
+                    .child_output => |ref| .{
                         .child_output = .{
-                            .child_key = child_idxs.get(keys.child_key).?.*,
-                            .output = switch (keys.output) {
+                            .child_key = child_idxs.get(ref.child_key).?.*,
+                            .output = switch (ref.output) {
                                 .logic_gate => .logic_gate,
                                 .not_gate => .not_gate,
                                 .custom => |output_key| blk: {
-                                    const child_mod_key = mod.children.get(keys.child_key).?.mod.custom;
+                                    const child_mod_key = mod.children.get(ref.child_key).?.mod.custom;
                                     const child_output_idxs = output_idxs_all.get(child_mod_key).?;
                                     break :blk .{ .custom = child_output_idxs.get(output_key).?.* };
                                 },
@@ -228,14 +228,14 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
                 },
                 .to = switch (wire.to) {
                     .top_output => |key| .{ .top_output = output_idxs.get(key).?.* },
-                    .child_input => |keys| .{
+                    .child_input => |ref| .{
                         .child_input = .{
-                            .child_key = child_idxs.get(keys.child_key).?.*,
-                            .input = switch (keys.input) {
+                            .child_key = child_idxs.get(ref.child_key).?.*,
+                            .input = switch (ref.input) {
                                 .logic_gate => |idx| .{ .logic_gate = idx },
                                 .not_gate => .not_gate,
                                 .custom => |input_key| blk: {
-                                    const child_mod_key = mod.children.get(keys.child_key).?.mod.custom;
+                                    const child_mod_key = mod.children.get(ref.child_key).?.mod.custom;
                                     const child_input_idxs = input_idxs_all.get(child_mod_key).?;
                                     break :blk .{ .custom = child_input_idxs.get(input_key).?.* };
                                 },
@@ -374,14 +374,14 @@ pub fn loadCustomModules(gpa: Allocator) !void {
             const wire: CustomModule.Wire = .{
                 .from = switch (wire_json.from) {
                     .top_input => |input_idx| .{ .top_input = input_keys[input_idx] },
-                    .child_output => |keys| .{
+                    .child_output => |ref| .{
                         .child_output = .{
-                            .child_key = child_keys[keys.child_key],
-                            .output = switch (keys.output) {
+                            .child_key = child_keys[ref.child_key],
+                            .output = switch (ref.output) {
                                 .logic_gate => .logic_gate,
                                 .not_gate => .not_gate,
                                 .custom => |output_idx| blk: {
-                                    const child_mod_idx = mod_json.children[keys.child_key].mod.custom;
+                                    const child_mod_idx = mod_json.children[ref.child_key].mod.custom;
                                     const child_output_keys = output_keys_all[child_mod_idx];
                                     break :blk .{ .custom = child_output_keys[output_idx] };
                                 },
@@ -391,14 +391,14 @@ pub fn loadCustomModules(gpa: Allocator) !void {
                 },
                 .to = switch (wire_json.to) {
                     .top_output => |output_idx| .{ .top_output = output_keys[output_idx] },
-                    .child_input => |keys| .{
+                    .child_input => |ref| .{
                         .child_input = .{
-                            .child_key = child_keys[keys.child_key],
-                            .input = switch (keys.input) {
+                            .child_key = child_keys[ref.child_key],
+                            .input = switch (ref.input) {
                                 .logic_gate => |input_idx| .{ .logic_gate = input_idx },
                                 .not_gate => .not_gate,
                                 .custom => |input_idx| blk: {
-                                    const child_mod_idx = mod_json.children[keys.child_key].mod.custom;
+                                    const child_mod_idx = mod_json.children[ref.child_key].mod.custom;
                                     const child_input_keys = input_keys_all[child_mod_idx];
                                     break :blk .{ .custom = child_input_keys[input_idx] };
                                 },

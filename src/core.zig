@@ -25,12 +25,23 @@ pub const Module = union(enum) {
         input_cnt: usize,
     };
 
+    pub const Split = struct {
+        input_width: usize,
+        output_from: usize,
+        output_to: usize,
+
+        pub fn outputWidth(self: @This()) usize {
+            return self.output_to - self.output_from + 1;
+        }
+    };
+
     pub const Settings = union(enum) {
         logic_gate: LogicGateSettings,
     };
 
     logic_gate: LogicGate,
     not_gate,
+    // split: Split,
     custom: CustomModule.Key,
 
     pub fn currentSettings(self: *const Self) ?Settings {
@@ -60,15 +71,15 @@ pub const CustomModule = struct {
     pub const OutputKey = SlotMap(Output).Key;
     pub const WireKey = SlotMap(Wire).Key;
 
-    pub const ChildInput = struct {
-        pub const I = union(enum) {
+    pub const ChildInputRef = struct {
+        pub const InputRef = union(enum) {
             logic_gate: usize,
             not_gate,
             custom: InputKey,
         };
 
         child_key: Child.Key,
-        input: I,
+        input: InputRef,
 
         pub fn equals(self: @This(), other: @This()) bool {
             if (!self.child_key.equals(other.child_key))
@@ -82,15 +93,15 @@ pub const CustomModule = struct {
         }
     };
 
-    pub const ChildOutput = struct {
-        pub const O = union(enum) {
+    pub const ChildOutputRef = struct {
+        pub const OutputRef = union(enum) {
             logic_gate,
             not_gate,
             custom: OutputKey,
         };
 
         child_key: Child.Key,
-        output: O,
+        output: OutputRef,
 
         pub fn equals(self: @This(), other: @This()) bool {
             if (!self.child_key.equals(other.child_key))
@@ -106,7 +117,7 @@ pub const CustomModule = struct {
 
     pub const WireSrc = union(enum) {
         top_input: InputKey,
-        child_output: ChildOutput,
+        child_output: ChildOutputRef,
 
         pub fn equals(self: *const @This(), other: *const @This()) bool {
             return switch (self.*) {
@@ -118,7 +129,7 @@ pub const CustomModule = struct {
 
     pub const WireDest = union(enum) {
         top_output: OutputKey,
-        child_input: ChildInput,
+        child_input: ChildInputRef,
 
         pub fn equals(self: *const @This(), other: *const @This()) bool {
             return switch (self.*) {
@@ -204,13 +215,13 @@ pub const CustomModule = struct {
     pub fn wireSrcWidth(self: *const Self, src: WireSrc) usize {
         switch (src) {
             .top_input => |input_key| return self.inputs.get(input_key).?.width,
-            .child_output => |keys| {
-                const child = self.children.get(keys.child_key).?;
+            .child_output => |ref| {
+                const child = self.children.get(ref.child_key).?;
                 return switch (child.mod) {
                     .logic_gate, .not_gate => return 1,
                     .custom => |mod_key| {
                         const mod = globals.modules.get(mod_key).?;
-                        return mod.outputs.get(keys.output.custom).?.width;
+                        return mod.outputs.get(ref.output.custom).?.width;
                     },
                 };
             },
@@ -220,13 +231,13 @@ pub const CustomModule = struct {
     pub fn wireDestWidth(self: *const Self, dest: WireDest) usize {
         switch (dest) {
             .top_output => |output_key| return self.outputs.get(output_key).?.width,
-            .child_input => |keys| {
-                const child = self.children.get(keys.child_key).?;
+            .child_input => |ref| {
+                const child = self.children.get(ref.child_key).?;
                 switch (child.mod) {
                     .logic_gate, .not_gate => return 1,
                     .custom => |mod_key| {
                         const mod = globals.modules.get(mod_key).?;
-                        return mod.inputs.get(keys.input.custom).?.width;
+                        return mod.inputs.get(ref.input.custom).?.width;
                     },
                 }
             },
