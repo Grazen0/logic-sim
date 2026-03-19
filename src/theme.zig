@@ -15,10 +15,12 @@ const sumi_ink_4: Color = .init(0x54, 0x54, 0x6D, 0xFF);
 const wave_blue_2: Color = .init(0x2D, 0x4F, 0x67, 0xFF);
 const autumn_green: Color = .init(0x76, 0x94, 0x6A, 0xFF);
 const autumn_red: Color = .init(0xC3, 0x40, 0x43, 0xFF);
+const dragon_blue: Color = .init(0x65, 0x85, 0x94, 0xFF);
 const fuji_gray: Color = .init(0x72, 0x71, 0x69, 0xFF);
 const spring_violet_1: Color = .init(0x93, 0x8A, 0xA9, 0xFF);
 const oni_violet: Color = .init(0x95, 0x7F, 0xB8, 0xFF);
 const crystal_blue: Color = .init(0x7E, 0x9C, 0xD8, 0xFF);
+const katana_gray: Color = .init(0x71, 0x7C, 0x7C, 0xFF);
 
 pub const background = sumi_ink_1;
 pub const background_alt = sumi_ink_2;
@@ -36,6 +38,8 @@ pub const or_gate = autumn_green;
 pub const nor_gate = oni_violet;
 pub const xor_gate = wave_blue_2;
 pub const not_gate = autumn_red;
+pub const split = katana_gray;
+pub const clock = dragon_blue;
 
 pub fn loadStyle() void {
     rg.setStyle(.default, .{ .control = .border_color_normal }, sumi_ink_4.toInt());

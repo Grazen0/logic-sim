@@ -24,14 +24,14 @@ pub fn SlotMap(comptime T: type) type {
                 next_free: usize,
             },
 
-            inline fn isOccupied(self: *const @This()) bool {
+            inline fn isOccupied(self: @This()) bool {
                 return (self.gen % 2) != 0;
             }
         };
 
         slots: ArrayList(Slot),
         first_free: usize,
-        size: usize,
+        count: usize,
 
         fn Iter(comptime S: type, comptime V: type) type {
             return struct {
@@ -145,14 +145,14 @@ pub fn SlotMap(comptime T: type) type {
         pub const empty: Self = .{
             .slots = .empty,
             .first_free = 0,
-            .size = 0,
+            .count = 0,
         };
 
         pub fn initCapacity(gpa: Allocator, num: usize) !Self {
             return .{
                 .slots = try .initCapacity(gpa, num),
                 .first_free = 0,
-                .size = 0,
+                .count = 0,
             };
         }
 
@@ -177,32 +177,32 @@ pub fn SlotMap(comptime T: type) type {
             slot.contents = .{ .data = value };
             slot.gen += 1;
 
-            self.size += 1;
+            self.count += 1;
             return .{ .index = slot_idx, .gen = slot.gen };
         }
 
-        pub fn hasKey(self: *const Self, key: Key) bool {
-            return self.get_slot(key) != null;
+        pub fn hasKey(self: Self, key: Key) bool {
+            return self.getSlot(key) != null;
         }
 
         pub fn get(self: Self, key: Key) ?*T {
-            const slot = self.get_slot(key) orelse return null;
+            const slot = self.getSlot(key) orelse return null;
             return &slot.contents.data;
         }
 
         pub fn remove(self: *Self, key: Key) ?T {
-            const slot = self.get_slot(key) orelse return null;
+            const slot = self.getSlot(key) orelse return null;
             const data = slot.contents.data;
 
             slot.gen += 1;
             slot.contents = .{ .next_free = self.first_free };
             self.first_free = key.index;
 
-            self.size -= 1;
+            self.count -= 1;
             return data;
         }
 
-        pub fn const_iterator(self: *const Self) ConstIterator {
+        pub fn constIterator(self: *const Self) ConstIterator {
             return .{
                 .slot_map = self,
                 .idx = 0,
@@ -216,14 +216,14 @@ pub fn SlotMap(comptime T: type) type {
             };
         }
 
-        pub fn rev_iterator(self: *Self) ReverseIterator {
+        pub fn revIterator(self: *Self) ReverseIterator {
             return .{
                 .slot_map = self,
                 .idx = self.slots.items.len,
             };
         }
 
-        fn get_slot(self: *const Self, key: Key) ?*Slot {
+        fn getSlot(self: Self, key: Key) ?*Slot {
             const slot = &self.slots.items[key.index];
             return if (slot.gen == key.gen) slot else null;
         }
@@ -236,13 +236,13 @@ test "SlotMap operations" {
     var map: SlotMap([]const u8) = .empty;
     defer map.deinit(gpa);
 
-    try testing.expectEqual(map.size, 0);
+    try testing.expectEqual(map.count, 0);
 
     const foo = try map.put(gpa, "foo");
     const bar = try map.put(gpa, "bar");
     const baz = try map.put(gpa, "baz");
 
-    try testing.expectEqual(map.size, 3);
+    try testing.expectEqual(map.count, 3);
     try testing.expect(map.hasKey(foo));
     try testing.expect(map.hasKey(bar));
     try testing.expect(map.hasKey(baz));
@@ -253,7 +253,7 @@ test "SlotMap operations" {
 
     try testing.expectEqualStrings(map.remove(bar).?, "bar");
 
-    try testing.expectEqual(map.size, 2);
+    try testing.expectEqual(map.count, 2);
     try testing.expect(map.hasKey(foo));
     try testing.expect(!map.hasKey(bar));
     try testing.expect(map.hasKey(baz));
@@ -264,7 +264,7 @@ test "SlotMap operations" {
 
     try testing.expectEqualStrings(map.remove(foo).?, "foo");
 
-    try testing.expectEqual(map.size, 1);
+    try testing.expectEqual(map.count, 1);
     try testing.expect(!map.hasKey(foo));
     try testing.expect(!map.hasKey(bar));
     try testing.expect(map.hasKey(baz));
@@ -275,7 +275,7 @@ test "SlotMap operations" {
 
     const lorem = try map.put(gpa, "lorem");
 
-    try testing.expectEqual(map.size, 2);
+    try testing.expectEqual(map.count, 2);
     try testing.expect(!map.hasKey(foo));
     try testing.expect(!map.hasKey(bar));
     try testing.expect(map.hasKey(baz));
@@ -288,7 +288,7 @@ test "SlotMap operations" {
 
     try testing.expectEqualStrings(map.remove(baz).?, "baz");
 
-    try testing.expectEqual(map.size, 1);
+    try testing.expectEqual(map.count, 1);
     try testing.expect(!map.hasKey(foo));
     try testing.expect(!map.hasKey(bar));
     try testing.expect(!map.hasKey(baz));
@@ -301,7 +301,7 @@ test "SlotMap operations" {
 
     const ipsum = try map.put(gpa, "ipsum");
 
-    try testing.expectEqual(map.size, 2);
+    try testing.expectEqual(map.count, 2);
     try testing.expect(!map.hasKey(foo));
     try testing.expect(!map.hasKey(bar));
     try testing.expect(!map.hasKey(baz));
@@ -328,7 +328,7 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
         };
 
         slots: ArrayList(Slot),
-        size: usize,
+        count: usize,
 
         fn Iter(comptime S: type, comptime V: type) type {
             return struct {
@@ -393,7 +393,7 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
 
         pub const empty: Self = .{
             .slots = .empty,
-            .size = 0,
+            .count = 0,
         };
 
         pub fn deinit(self: *Self, gpa: Allocator) void {
@@ -416,7 +416,7 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
             switch (slot.*) {
                 .vacant => {
                     slot.* = .{ .occupied = .{ .data = value, .gen = key.gen } };
-                    self.size += 1;
+                    self.count += 1;
                     return null;
                 },
                 .occupied => |*slot_v| {
@@ -441,7 +441,7 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
             };
         }
 
-        pub fn hasKey(self: *const Self, key: K) bool {
+        pub fn hasKey(self: Self, key: K) bool {
             if (key.index >= self.slots.items.len)
                 return false;
 
@@ -465,12 +465,14 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
 
                     const prev_data = slot_v.data;
                     slot.* = .vacant;
+                    self.count -= 1;
+
                     return prev_data;
                 },
             }
         }
 
-        pub fn const_iterator(self: *const Self) ConstIterator {
+        pub fn constIterator(self: Self) ConstIterator {
             return .{ .map = self, .idx = 0 };
         }
 
@@ -478,10 +480,10 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
             return .{ .map = self, .idx = 0 };
         }
 
-        pub fn clone(self: *const Self, gpa: Allocator) !Self {
+        pub fn clone(self: Self, gpa: Allocator) !Self {
             return .{
                 .slots = try self.slots.clone(gpa),
-                .size = self.size,
+                .count = self.count,
             };
         }
     };

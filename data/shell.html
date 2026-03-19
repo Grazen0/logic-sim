@@ -56,6 +56,72 @@
         max-height: 100vh;
       }
     </style>
+    <script
+      type="text/javascript"
+      src="https://cdn.jsdelivr.net/gh/eligrey/FileSaver.js/dist/FileSaver.min.js"
+    ></script>
+    <script type="text/javascript">
+      function saveFileFromMEMFSToDisk(memoryFSname, localFSname) {
+        // This can be called by C/C++ code
+        var isSafari = false; // Not supported, navigator.userAgent access is being restricted
+        //var isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+        var data = FS.readFile(memoryFSname);
+        var blob;
+
+        if (isSafari)
+          blob = new Blob([data.buffer], { type: "application/octet-stream" });
+        else
+          blob = new Blob([data.buffer], { type: "application/octet-binary" });
+
+        // NOTE: SaveAsDialog is a browser setting. For example, in Google Chrome,
+        // in Settings/Advanced/Downloads section you have a setting:
+        // 'Ask where to save each file before downloading' - which you can set true/false.
+        // If you enable this setting it would always ask you and bring the SaveAsDialog
+        saveAs(blob, localFSname);
+
+        // Alternative implementation to avoid FileSaver.js
+        //const link = document.createElement("a");
+        //link.href = URL.createObjectURL(blob);
+        //link.download = localFSname;
+        //link.click();
+      }
+
+      function downloadModulesFile() {
+        saveFileFromMEMFSToDisk("/data/modules.json", "modules.json");
+      }
+
+      function selectModulesFile() {
+        var file_reader = new FileReader();
+        file_reader.onload = (ev) => {
+          var uint8Arr = new Uint8Array(ev.target.result);
+          var num_bytes = uint8Arr.length * uint8Arr.BYTES_PER_ELEMENT;
+          var data_ptr = Module._malloc(num_bytes);
+          var data_on_heap = new Uint8Array(
+            Module.HEAPU8.buffer,
+            data_ptr,
+            num_bytes,
+          );
+          data_on_heap.set(uint8Arr);
+          var res = Module.ccall(
+            "processFile",
+            "void",
+            ["number", "number"],
+            [data_on_heap.byteOffset, uint8Arr.length],
+          );
+          Module._free(data_ptr);
+        };
+
+        var sel = document.createElement("input");
+        sel.type = "file";
+        sel.accept = ".json";
+
+        sel.onchange = function (ev) {
+          file_reader.readAsArrayBuffer(ev.target.files[0]);
+        };
+
+        sel.click();
+      }
+    </script>
   </head>
   <body>
     <canvas

@@ -45,7 +45,8 @@ pub fn build(b: *std.Build) !void {
 
         try emcc_flags.put("-lidbfs.js", {});
         try emcc_settings.put("FORCE_FILESYSTEM", "1");
-        try emcc_settings.put("EXPORTED_RUNTIME_METHODS", "['FS', 'callMain']");
+        try emcc_settings.put("EXPORTED_RUNTIME_METHODS", "['FS', 'callMain', 'ccall']");
+        try emcc_settings.put("EXPORTED_FUNCTIONS", "['_main', '_processFile', '_malloc', '_free']");
 
         const emcc_step = emsdk.emccStep(b, raylib_artifact, wasm, .{
             .optimize = optimize,

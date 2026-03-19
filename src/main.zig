@@ -59,7 +59,7 @@ pub fn main() anyerror!void {
 
     rl.setExitKey(.null);
     theme.loadStyle();
-    rl.setTargetFPS(60);
+    rl.setTargetFPS(consts.target_fps);
 
     var ctx: GameContext = .init();
 

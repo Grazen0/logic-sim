@@ -1,4 +1,6 @@
+const std = @import("std");
 const rl = @import("raylib");
+const consts = @import("./consts.zig");
 
 const Vector2 = rl.Vector2;
 const Rectangle = rl.Rectangle;
@@ -33,6 +35,8 @@ pub fn touchesSegment(point: Vector2, seg_a: Vector2, seg_b: Vector2, seg_thick:
     const y_min = @min(seg_a.y, seg_b.y);
     const y_max = @max(seg_a.y, seg_b.y);
 
-    const within_bounds = (point.x >= x_min and point.x <= x_max) or (point.y >= y_min and point.y <= y_max);
-    return within_bounds and distanceToSegment(point, seg_a, seg_b) < (seg_thick / 2);
+    const meets_x = point.x >= x_min - (seg_thick / 2) and point.x <= x_max + (seg_thick / 2);
+    const meets_y = point.y >= y_min - (seg_thick / 2) and point.y <= y_max + (seg_thick / 2);
+
+    return meets_x and meets_y and distanceToSegment(point, seg_a, seg_b) < (seg_thick / 2);
 }

@@ -20,6 +20,8 @@ pub const ModuleJson = union(enum) {
 
     logic_gate: Module.LogicGate,
     not_gate,
+    split: Module.Split,
+    clock: Module.Clock,
     custom: usize,
 };
 
@@ -38,6 +40,8 @@ const CustomModuleJson = struct {
             output: union(enum) {
                 logic_gate,
                 not_gate,
+                split,
+                clock,
                 custom: usize,
             },
         },
@@ -48,8 +52,9 @@ const CustomModuleJson = struct {
         child_input: struct {
             child_key: usize,
             input: union(enum) {
-                logic_gate: usize,
+                logic_gate: ?usize,
                 not_gate,
+                split,
                 custom: usize,
             },
         },
@@ -67,13 +72,19 @@ const CustomModuleJson = struct {
 
     name: []u8,
     color: u32,
-    inputs: []CustomModule.Input,
-    outputs: []CustomModule.Output,
+    inputs: []CustomModule.Port,
+    outputs: []CustomModule.Port,
     children: []Child,
     wires: []Wire,
 
     pub fn deinit(self: Self, gpa: Allocator) void {
-        for (self.wires) |wire|
+        for (self.inputs) |*input|
+            input.deinit(gpa);
+
+        for (self.outputs) |*output|
+            output.deinit(gpa);
+
+        for (self.wires) |*wire|
             wire.deinit(gpa);
 
         gpa.free(self.name);
@@ -87,10 +98,10 @@ const CustomModuleJson = struct {
 fn createKeyIndexMaps(
     gpa: Allocator,
     mod_idxs: *SecondaryMap(CustomModule.Key, usize),
-    input_idxs_all: *SecondaryMap(CustomModule.Key, SecondaryMap(CustomModule.InputKey, usize)),
-    output_idxs_all: *SecondaryMap(CustomModule.Key, SecondaryMap(CustomModule.OutputKey, usize)),
+    input_idxs_all: *SecondaryMap(CustomModule.Key, SecondaryMap(CustomModule.PortKey, usize)),
+    output_idxs_all: *SecondaryMap(CustomModule.Key, SecondaryMap(CustomModule.PortKey, usize)),
 ) !void {
-    var mods_iter = modules.const_iterator();
+    var mods_iter = modules.constIterator();
     var i: usize = 0;
 
     while (mods_iter.next()) |mod_entry| : (i += 1) {
@@ -98,15 +109,15 @@ fn createKeyIndexMaps(
         const mod = mod_entry.val;
         _ = try mod_idxs.put(gpa, mod_key, i);
 
-        var input_idxs: SecondaryMap(CustomModule.InputKey, usize) = .empty;
-        var inputs_iter = mod.inputs.const_iterator();
+        var input_idxs: SecondaryMap(CustomModule.PortKey, usize) = .empty;
+        var inputs_iter = mod.inputs.constIterator();
         var j: usize = 0;
 
         while (inputs_iter.nextKey()) |input_key| : (j += 1)
             _ = try input_idxs.put(gpa, input_key, j);
 
-        var output_idxs: SecondaryMap(CustomModule.OutputKey, usize) = .empty;
-        var outputs_iter = mod.outputs.const_iterator();
+        var output_idxs: SecondaryMap(CustomModule.PortKey, usize) = .empty;
+        var outputs_iter = mod.outputs.constIterator();
         j = 0;
 
         while (outputs_iter.nextKey()) |output_key| : (j += 1)
@@ -121,7 +132,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
     var mod_idxs: SecondaryMap(CustomModule.Key, usize) = .empty;
     defer mod_idxs.deinit(gpa);
 
-    var input_idxs_all: SecondaryMap(CustomModule.Key, SecondaryMap(CustomModule.InputKey, usize)) = .empty;
+    var input_idxs_all: SecondaryMap(CustomModule.Key, SecondaryMap(CustomModule.PortKey, usize)) = .empty;
     defer input_idxs_all.deinit(gpa);
     defer {
         var iter = input_idxs_all.iterator();
@@ -129,7 +140,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
             idxs.deinit(gpa);
     }
 
-    var output_idxs_all: SecondaryMap(CustomModule.Key, SecondaryMap(CustomModule.OutputKey, usize)) = .empty;
+    var output_idxs_all: SecondaryMap(CustomModule.Key, SecondaryMap(CustomModule.PortKey, usize)) = .empty;
     defer output_idxs_all.deinit(gpa);
     defer {
         var iter = output_idxs_all.iterator();
@@ -141,7 +152,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
 
     var mods_json: ArrayList(CustomModuleJson) = .empty;
 
-    var mods_iter = modules.const_iterator();
+    var mods_iter = modules.constIterator();
     while (mods_iter.next()) |mod_entry| {
         const mod_key = mod_entry.key;
         const mod = mod_entry.val;
@@ -149,8 +160,8 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
         const output_idxs = output_idxs_all.get(mod_key).?;
         const input_idxs = input_idxs_all.get(mod_key).?;
 
-        var inputs_json = try gpa.alloc(CustomModule.Input, mod.inputs.size);
-        var inputs_iter = mod.inputs.const_iterator();
+        var inputs_json = try gpa.alloc(CustomModule.Port, mod.inputs.count);
+        var inputs_iter = mod.inputs.constIterator();
 
         while (inputs_iter.next()) |entry| {
             const input_key = entry.key;
@@ -159,13 +170,13 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
 
             inputs_json[idx] = .{
                 .name = if (input.name) |name| try gpa.dupeZ(u8, name) else null,
-                .pos = input.pos,
+                .order = input.order,
                 .width = input.width,
             };
         }
 
-        var outputs_json = try gpa.alloc(CustomModule.Output, mod.outputs.size);
-        var outputs_iter = mod.outputs.const_iterator();
+        var outputs_json = try gpa.alloc(CustomModule.Port, mod.outputs.count);
+        var outputs_iter = mod.outputs.constIterator();
 
         while (outputs_iter.next()) |entry| {
             const output_key = entry.key;
@@ -174,16 +185,16 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
 
             outputs_json[idx] = .{
                 .name = if (output.name) |name| try gpa.dupeZ(u8, name) else null,
-                .pos = output.pos,
+                .order = output.order,
                 .width = output.width,
             };
         }
 
-        var children_json = try gpa.alloc(CustomModuleJson.Child, mod.children.size);
+        var children_json = try gpa.alloc(CustomModuleJson.Child, mod.children.count);
         var child_idxs: SecondaryMap(CustomModule.Child.Key, usize) = .empty;
         defer child_idxs.deinit(gpa);
 
-        var children_iter = mod.children.const_iterator();
+        var children_iter = mod.children.constIterator();
         var i: usize = 0;
 
         while (children_iter.next()) |child_entry| : (i += 1) {
@@ -195,16 +206,18 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
             children_json[i] = .{
                 .pos = child.pos,
                 .mod = switch (child.mod) {
+                    .split => |split| .{ .split = split },
                     .logic_gate => |gate| .{ .logic_gate = gate },
                     .not_gate => .not_gate,
+                    .clock => |clock| .{ .clock = clock },
                     .custom => |mkey| .{ .custom = mod_idxs.get(mkey).?.* },
                 },
             };
         }
 
-        var wires_json = try gpa.alloc(CustomModuleJson.Wire, mod.wires.size);
+        var wires_json = try gpa.alloc(CustomModuleJson.Wire, mod.wires.count);
 
-        var wire_iter = mod.wires.const_iterator();
+        var wire_iter = mod.wires.constIterator();
         i = 0;
 
         while (wire_iter.nextValue()) |wire| : (i += 1) {
@@ -217,6 +230,8 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
                             .output = switch (ref.output) {
                                 .logic_gate => .logic_gate,
                                 .not_gate => .not_gate,
+                                .split => .split,
+                                .clock => .clock,
                                 .custom => |output_key| blk: {
                                     const child_mod_key = mod.children.get(ref.child_key).?.mod.custom;
                                     const child_output_idxs = output_idxs_all.get(child_mod_key).?;
@@ -234,6 +249,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
                             .input = switch (ref.input) {
                                 .logic_gate => |idx| .{ .logic_gate = idx },
                                 .not_gate => .not_gate,
+                                .split => .split,
                                 .custom => |input_key| blk: {
                                     const child_mod_key = mod.children.get(ref.child_key).?.mod.custom;
                                     const child_input_idxs = input_idxs_all.get(child_mod_key).?;
@@ -262,6 +278,18 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
     return try mods_json.toOwnedSlice(gpa);
 }
 
+pub fn createModuleJsonListString(gpa: Allocator) ![]u8 {
+    const mods_json = try createModuleJsonList(gpa);
+    defer gpa.free(mods_json);
+    defer for (mods_json) |mod| mod.deinit(gpa);
+
+    var writer: std.io.Writer.Allocating = .init(gpa);
+    defer writer.deinit();
+
+    try writer.writer.print("{f}", .{std.json.fmt(mods_json, .{ .whitespace = .indent_2 })});
+    return try gpa.dupe(u8, writer.written());
+}
+
 fn modulesFilename(gpa: Allocator) ![:0]u8 {
     return try user_dirs.dataDirFileZ(gpa, "modules.json");
 }
@@ -270,34 +298,17 @@ pub fn saveCustomModules(gpa: Allocator) !void {
     const filename = try modulesFilename(gpa);
     defer gpa.free(filename);
 
-    const mods_json = try createModuleJsonList(gpa);
-    defer gpa.free(mods_json);
-    defer for (mods_json) |mod| mod.deinit(gpa);
-
-    var data_str: std.io.Writer.Allocating = .init(gpa);
-    defer data_str.deinit();
-
-    try data_str.writer.print("{f}", .{std.json.fmt(mods_json, .{ .whitespace = .indent_2 })});
-
     if (rl.makeDirectory(rl.getDirectoryPath(filename)) != 0)
         return error.MakeDirectoryError;
 
-    if (!rl.saveFileData(filename, data_str.written()))
+    const data_str = try createModuleJsonListString(gpa);
+    defer gpa.free(data_str);
+
+    if (!rl.saveFileData(filename, data_str))
         return error.SaveFileDataError;
 }
 
-pub fn loadCustomModules(gpa: Allocator) !void {
-    const filename = try modulesFilename(gpa);
-    defer gpa.free(filename);
-
-    if (!rl.fileExists(filename)) {
-        std.log.info("Modules file not found.", .{});
-        return;
-    }
-
-    std.log.info("Modules file found. Loading custom modules...", .{});
-
-    const data_str = try rl.loadFileData(filename);
+pub fn loadCustomModulesFromStr(gpa: Allocator, data_str: []const u8) !void {
     const parsed = try std.json.parseFromSlice([]CustomModuleJson, gpa, data_str, .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
 
@@ -306,33 +317,33 @@ pub fn loadCustomModules(gpa: Allocator) !void {
     const mod_keys = try gpa.alloc(CustomModule.Key, mods_json.len);
     defer gpa.free(mod_keys);
 
-    const input_keys_all = try gpa.alloc([]CustomModule.InputKey, mods_json.len);
+    const input_keys_all = try gpa.alloc([]CustomModule.PortKey, mods_json.len);
     defer gpa.free(input_keys_all);
     defer for (input_keys_all) |input_keys| gpa.free(input_keys);
 
-    const output_keys_all = try gpa.alloc([]CustomModule.OutputKey, mods_json.len);
+    const output_keys_all = try gpa.alloc([]CustomModule.PortKey, mods_json.len);
     defer gpa.free(output_keys_all);
     defer for (output_keys_all) |output_keys| gpa.free(output_keys);
 
     for (0.., mods_json) |i, mod_json| {
-        input_keys_all[i] = try gpa.alloc(CustomModule.InputKey, mod_json.inputs.len);
-        var inputs: SlotMap(CustomModule.Input) = try .initCapacity(gpa, mod_json.inputs.len);
+        input_keys_all[i] = try gpa.alloc(CustomModule.PortKey, mod_json.inputs.len);
+        var inputs: SlotMap(CustomModule.Port) = try .initCapacity(gpa, mod_json.inputs.len);
 
         for (0.., mod_json.inputs) |j, input| {
             input_keys_all[i][j] = try inputs.put(gpa, .{
                 .name = if (input.name) |name| try gpa.dupeZ(u8, name) else null,
-                .pos = input.pos,
+                .order = input.order,
                 .width = input.width,
             });
         }
 
-        output_keys_all[i] = try gpa.alloc(CustomModule.OutputKey, mod_json.outputs.len);
-        var outputs: SlotMap(CustomModule.Output) = try .initCapacity(gpa, mod_json.outputs.len);
+        output_keys_all[i] = try gpa.alloc(CustomModule.PortKey, mod_json.outputs.len);
+        var outputs: SlotMap(CustomModule.Port) = try .initCapacity(gpa, mod_json.outputs.len);
 
         for (0.., mod_json.outputs) |j, output| {
             output_keys_all[i][j] = try outputs.put(gpa, .{
                 .name = if (output.name) |name| try gpa.dupeZ(u8, name) else null,
-                .pos = output.pos,
+                .order = output.order,
                 .width = output.width,
             });
         }
@@ -361,6 +372,8 @@ pub fn loadCustomModules(gpa: Allocator) !void {
                 .mod = switch (child_json.mod) {
                     .logic_gate => |gate| .{ .logic_gate = gate },
                     .not_gate => .not_gate,
+                    .split => |split| .{ .split = split },
+                    .clock => |clock| .{ .clock = clock },
                     .custom => |mod_idx| .{ .custom = mod_keys[mod_idx] },
                 },
             };
@@ -380,6 +393,8 @@ pub fn loadCustomModules(gpa: Allocator) !void {
                             .output = switch (ref.output) {
                                 .logic_gate => .logic_gate,
                                 .not_gate => .not_gate,
+                                .split => .split,
+                                .clock => .clock,
                                 .custom => |output_idx| blk: {
                                     const child_mod_idx = mod_json.children[ref.child_key].mod.custom;
                                     const child_output_keys = output_keys_all[child_mod_idx];
@@ -397,6 +412,7 @@ pub fn loadCustomModules(gpa: Allocator) !void {
                             .input = switch (ref.input) {
                                 .logic_gate => |input_idx| .{ .logic_gate = input_idx },
                                 .not_gate => .not_gate,
+                                .split => .split,
                                 .custom => |input_idx| blk: {
                                     const child_mod_idx = mod_json.children[ref.child_key].mod.custom;
                                     const child_input_keys = input_keys_all[child_mod_idx];
@@ -424,4 +440,21 @@ pub fn loadCustomModules(gpa: Allocator) !void {
             .wires = wires,
         };
     }
+}
+
+pub fn loadCustomModules(gpa: Allocator) !void {
+    const filename = try modulesFilename(gpa);
+    defer gpa.free(filename);
+
+    if (!rl.fileExists(filename)) {
+        std.log.info("Modules file not found.", .{});
+        return;
+    }
+
+    std.log.info("Modules file found. Loading custom modules...", .{});
+
+    const data_str = try rl.loadFileData(filename);
+    defer rl.memFree(data_str.ptr);
+
+    try loadCustomModulesFromStr(gpa, data_str);
 }

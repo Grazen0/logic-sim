@@ -5,6 +5,7 @@ const rl = @import("raylib");
 const rg = @import("raygui");
 const re = @import("../ray_extra.zig");
 const consts = @import("../consts.zig");
+const structs = @import("../structs/structs.zig");
 const globals = @import("../globals.zig");
 const theme = @import("../theme.zig");
 const GameContext = @import("../GameContext.zig");
@@ -16,12 +17,9 @@ const Rectangle = rl.Rectangle;
 const Vector2 = rl.Vector2;
 const IconName = rg.IconName;
 const CustomModule = core.CustomModule;
+const SlotMap = structs.SlotMap;
 
 const comptimePrint = std.fmt.comptimePrint;
-
-const btn_size = 120;
-const btn_spacing = 20;
-const nav_btn_size: Vector2 = .init(50, ((btn_size + btn_spacing) * page_rows) - btn_spacing);
 
 const page_rows = 2;
 const page_cols = 6;
@@ -32,7 +30,9 @@ mod_list: ArrayList(struct { CustomModule.Key, *const CustomModule }),
 page: usize,
 max_page: usize,
 new_mod_dialog: bool,
-new_mod_name: [consts.max_mod_name_size:0]u8,
+new_mod_name_buf: [consts.max_mod_name_size]u8,
+
+extern fn emscripten_run_script(script: [*:0]const u8) void;
 
 pub fn init(gpa: Allocator, ctx: *GameContext) !Self {
     var out: Self = .{
@@ -41,7 +41,7 @@ pub fn init(gpa: Allocator, ctx: *GameContext) !Self {
         .max_page = undefined,
         .page = 0,
         .new_mod_dialog = false,
-        .new_mod_name = undefined,
+        .new_mod_name_buf = undefined,
     };
 
     try out.computeModList(gpa);
@@ -54,6 +54,10 @@ pub fn deinit(self: *Self, gpa: Allocator) void {
 }
 
 pub fn frame(self: *Self, gpa: Allocator) !void {
+    const btn_size = 120;
+    const btn_spacing = 20;
+    const nav_btn_size: Vector2 = .init(50, ((btn_size + btn_spacing) * page_rows) - btn_spacing);
+
     rl.clearBackground(theme.background);
 
     const font = rl.getFontDefault() catch unreachable;
@@ -101,7 +105,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
             if (mod) |m| {
                 self.ctx.next_scene = .{ .editor = m[0] };
             } else { // implies is_add_btn
-                self.new_mod_name[0] = 0;
+                self.new_mod_name_buf[0] = 0;
                 self.new_mod_dialog = true;
             }
         }
@@ -111,7 +115,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         re.drawTextAligned(
             font,
             "¡Create a new module to begin!",
-            .init(consts.screen_width / 2, consts.screen_height - 100),
+            .init(consts.screen_width / 2, consts.screen_height - 140),
             consts.font_size,
             consts.font_spacing,
             theme.text_muted,
@@ -134,7 +138,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
             "New module",
             "Module name:",
             "Create",
-            &self.new_mod_name,
+            @ptrCast(&self.new_mod_name_buf),
             consts.max_mod_name_size,
             null,
         );
@@ -152,37 +156,61 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         if (rl.isKeyPressed(.enter))
             try self.confirmCreateModule(gpa);
     }
+
+    if (consts.web_build)
+        self.drawWebButtons(gpa);
 }
 
-// TODO: remove this
-const SlotMap = @import("../structs/structs.zig").SlotMap;
+var file_gpa: Allocator = undefined;
+var file_self: *Self = undefined;
 
-pub fn allocPortSlotMap(comptime T: type, gpa: std.mem.Allocator, port_cnt: usize) !SlotMap(T) {
-    var out: SlotMap(T) = .empty;
+export fn processFile(data_ptr: [*]const u8, data_len: usize) void {
+    const data = data_ptr[0..data_len];
 
-    for (0..port_cnt) |i| {
-        _ = try out.put(gpa, .{
-            .name = null,
-            .width = 1,
-            .pos = @import("../math.zig").interpolate(port_cnt, i, 1),
-        });
+    globals.loadCustomModulesFromStr(file_gpa, data) catch |e| {
+        std.log.err("Could not load modules file: {}\n", .{e});
+        return;
+    };
+
+    globals.saveCustomModules(file_gpa) catch unreachable;
+    file_self.computeModList(file_gpa) catch unreachable;
+}
+
+fn drawWebButtons(self: *Self, gpa: Allocator) void {
+    const btn_size: Vector2 = .init(320, 45);
+
+    const pos_1: Vector2 = .init(consts.screen_width / 2, consts.screen_height - 150);
+    const pos_2: Vector2 = .init(pos_1.x, pos_1.y + btn_size.y + 20);
+
+    if (globals.modules.count > 0 and rg.button(re.rectWithCenter(pos_1, btn_size), comptimePrint("#{d}# Save modules file", .{IconName.file_save})))
+        emscripten_run_script("downloadModulesFile()");
+
+    if (rg.button(re.rectWithCenter(pos_2, btn_size), comptimePrint("#{d}# Load modules file", .{IconName.file_open}))) {
+        file_gpa = gpa;
+        file_self = self;
+        emscripten_run_script("selectModulesFile()");
     }
-
-    return out;
 }
 
 fn confirmCreateModule(self: *Self, gpa: Allocator) !void {
-    const strlen = std.mem.len(@as([*:0]u8, self.new_mod_name[0..]));
-    const trimmed = std.mem.trim(u8, self.new_mod_name[0..strlen], " ");
+    const strlen = std.mem.len(@as([*:0]u8, @ptrCast(self.new_mod_name_buf[0..])));
+    const trimmed = std.mem.trim(u8, self.new_mod_name_buf[0..strlen], " ");
 
     if (trimmed.len == 0)
         return;
 
+    var inputs: SlotMap(CustomModule.Port) = .empty;
+    _ = try inputs.put(gpa, .init(1, 0));
+    _ = try inputs.put(gpa, .init(1, 1));
+
+    var outputs: SlotMap(CustomModule.Port) = .empty;
+    _ = try outputs.put(gpa, .init(1, 0));
+
     const new_mod: CustomModule = .{
         .name = try gpa.dupeZ(u8, trimmed),
         .color = .red,
-        .inputs = try allocPortSlotMap(CustomModule.Input, gpa, 4),
-        .outputs = try allocPortSlotMap(CustomModule.Output, gpa, 4),
+        .inputs = inputs,
+        .outputs = outputs,
         .children = .empty,
         .wires = .empty,
     };
@@ -197,7 +225,7 @@ fn computeModList(self: *Self, gpa: Allocator) !void {
     var iter = globals.modules.iterator();
 
     self.mod_list.clearRetainingCapacity();
-    try self.mod_list.ensureTotalCapacity(gpa, globals.modules.size);
+    try self.mod_list.ensureTotalCapacity(gpa, globals.modules.count);
 
     while (iter.next()) |entry|
         try self.mod_list.append(gpa, .{ entry.key, entry.val });
