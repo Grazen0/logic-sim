@@ -30,3 +30,5 @@ pub const target_fps = 60;
 pub const logic_time_per_sec = 100_000;
 
 pub const escape_key: KeyboardKey = if (web_build) .escape else .caps_lock;
+
+pub const double_click_secs = 0.5;

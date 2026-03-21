@@ -1,5 +1,6 @@
 const rl = @import("raylib");
 const rg = @import("raygui");
+const theme = @import("./theme.zig");
 
 const Color = rl.Color;
 const Font = rl.Font;
@@ -147,4 +148,16 @@ pub fn valueBoxFloat(bounds: Rectangle, text: [:0]const u8, text_value: [:0]u8, 
 
 pub fn drawIconEx(icon_id: IconName, pos: Vector2, pixel_size: i32, color: Color) void {
     rg.drawIcon(@intFromEnum(icon_id), @intFromFloat(pos.x), @intFromFloat(pos.y), pixel_size, color);
+}
+
+pub fn drawTooltip(text: [:0]const u8) void {
+    const font_size = 28;
+    const font = rl.getFontDefault() catch unreachable;
+    const size = rl.measureTextEx(font, text, font_size, font_size * 0.1).add(.init(24, 8));
+
+    const mouse = rl.getMousePosition();
+
+    const rect = rectFromPosSize(mouse.subtract(.init(0, size.y)), size);
+    rl.drawRectangleRec(rect, theme.tooltip_bg);
+    drawTextAligned(font, text, rectCenter(rect), font_size, font_size * 0.1, theme.text, .center, .center);
 }

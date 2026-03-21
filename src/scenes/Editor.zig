@@ -161,6 +161,7 @@ const ModuleSettings = struct {
 ctx: *GameContext,
 prng: *DefaultPrng,
 top_inst: CustomModuleInstance,
+last_click: f64,
 time: u64,
 disabled_modules: AutoHashMap(CustomModule.Key, void),
 mouse_action: union(enum) {
@@ -212,6 +213,7 @@ pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self 
     return .{
         .ctx = ctx,
         .prng = prng,
+        .last_click = 0,
         .top_inst = try .init(gpa, mod_key, init_time),
         .time = init_time,
         .disabled_modules = disabled_modules,
@@ -256,16 +258,21 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     const mouse = rl.getMousePosition();
     const hover = try self.getHoverInfo(gpa, mouse);
 
-    switch (hover) {
-        .none => rl.setMouseCursor(.default),
-        else => rl.setMouseCursor(.pointing_hand),
-    }
+    rl.setMouseCursor(if (hover == .none) .default else .pointing_hand);
 
     rl.clearBackground(theme.background);
     try self.drawSimulation(gpa, mouse, hover);
 
     if (rl.isMouseButtonPressed(.left)) {
         try self.onClick(gpa, hover, mouse);
+
+        const time = rl.getTime();
+        if (time - self.last_click < consts.double_click_secs) {
+            try self.onDoubleClick(gpa, hover);
+            self.last_click = 0;
+        } else {
+            self.last_click = time;
+        }
     } else if (rl.isMouseButtonReleased(.left)) {
         try self.onUnclick(gpa);
     }
@@ -320,6 +327,28 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     }
 
     try self.simulateDelta(gpa, rl.getFrameTime());
+
+    switch (hover) {
+        .child_input => |ref| {
+            const child = self.topModPtr().children.get(ref.child_key).?;
+            if (child.mod.getInputTooltip(ref.input)) |input_name|
+                re.drawTooltip(input_name);
+        },
+        .child_output => |ref| {
+            const child = self.topModPtr().children.get(ref.child_key).?;
+            if (child.mod.getOutputTooltip(ref.output)) |output_name|
+                re.drawTooltip(output_name);
+        },
+        .top_input_pin => |input_key| {
+            if (top_mod.inputs.get(input_key).?.name) |input_name|
+                re.drawTooltip(input_name);
+        },
+        .top_output_pin => |output_key| {
+            if (top_mod.outputs.get(output_key).?.name) |output_name|
+                re.drawTooltip(output_name);
+        },
+        else => {},
+    }
 }
 
 fn simulateDelta(self: *Self, gpa: Allocator, delta: f32) !void {
@@ -469,7 +498,7 @@ fn drawSplitSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.SplitSet
 }
 
 fn drawJoinSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.JoinSettings) !void {
-    const win_rect = re.rectWithCenter(consts.screen_size.scale(0.5), .init(400, 350));
+    const win_rect = re.rectWithCenter(consts.screen_size.scale(0.5), .init(360, 350));
 
     if (rg.windowBox(win_rect, "Join settings") == 1) {
         try self.closeChildSettings(gpa, false);
@@ -497,38 +526,62 @@ fn drawJoinSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.JoinSetti
         });
     }
 
-    rl.drawRectangleLinesEx(inputs_rect, 2, .red);
-
     const item_height = 30;
     const item_space = 5;
-    var s: usize = 0;
 
-    for (0.., settings.inputs.items) |i, *input| {
-        var rect: Rectangle = .init(
-            inputs_rect.x,
-            inputs_rect.y + @as(f32, @floatFromInt(i)) * (item_height + item_space),
-            inputs_rect.width,
-            item_height,
-        );
+    var inputs_rect_inner = re.rectPad(inputs_rect, -8, -8);
+    inputs_rect_inner.width -= 16;
 
-        const width_box = re.rectTakeRight(&rect, 60);
+    const inputs_content_rect: Rectangle = .init(
+        inputs_rect_inner.x, // to prevent horizontal bar
+        inputs_rect_inner.y,
+        inputs_rect_inner.width,
+        @as(f32, @floatFromInt(settings.inputs.items.len)) * (item_height + item_space) - item_space,
+    );
 
-        const range_str = try allocPrintSentinel(gpa, "{d}:{d}", .{ s + input.width - 1, s }, 0);
-        defer gpa.free(range_str);
+    _ = rg.scrollPanel(inputs_rect, null, inputs_content_rect, &settings.panel_scroll, &settings.panel_view);
 
-        rl.drawRectangleLinesEx(rect, 2, .green);
-        re.drawTextAligned(font, range_str, re.rectAnchor(rect, .left, .center), 24, 2.4, theme.text, .left, .center);
+    var cur_slice_from: usize = 0;
 
-        re.valueBoxT(usize, width_box, "", &input.width, consts.min_port_width, consts.max_port_width, &input.edit);
+    {
+        re.beginScissorModeRec(inputs_rect);
+        defer rl.endScissorMode();
 
-        s += input.width;
+        var to_delete: ?usize = null;
+
+        for (0.., settings.inputs.items) |i, *input| {
+            var rect: Rectangle = .init(
+                inputs_rect_inner.x + settings.panel_scroll.x,
+                inputs_rect_inner.y + @as(f32, @floatFromInt(i)) * (item_height + item_space) + settings.panel_scroll.y,
+                inputs_rect_inner.width,
+                item_height,
+            );
+
+            const trash_box = re.rectTakeRight(&rect, 60);
+            _ = re.rectTakeRight(&rect, 10);
+            const width_box = re.rectTakeLeft(&rect, 60);
+
+            const range_str = try allocPrintSentinel(gpa, "{d}:{d}", .{ cur_slice_from + input.width - 1, cur_slice_from }, 0);
+            defer gpa.free(range_str);
+
+            re.drawTextAligned(font, range_str, re.rectAnchor(rect, .center, .center), 24, 2.4, theme.text, .center, .center);
+            re.valueBoxT(usize, width_box, "", &input.width, consts.min_port_width, consts.max_port_width, &input.edit);
+
+            if (rg.button(trash_box, comptimePrint("#{d}#", .{IconName.bin})))
+                to_delete = i;
+
+            cur_slice_from += input.width;
+        }
+
+        if (to_delete) |idx|
+            _ = settings.inputs.orderedRemove(idx);
     }
 
     const output_width_rect = re.rectTakeTop(&cur_rect, 30);
-    const output_width_str = try allocPrintSentinel(gpa, "Output width: {d}", .{s}, 0);
+    const output_width_str = try allocPrintSentinel(gpa, "Output width: {d}", .{cur_slice_from}, 0);
     defer gpa.free(output_width_str);
 
-    re.drawTextAligned(font, output_width_str, re.rectAnchor(output_width_rect, .left, .center), 24, 2.4, theme.text, .left, .center);
+    re.drawTextAligned(font, output_width_str, re.rectAnchor(output_width_rect, .center, .center), 24, 2.4, theme.text, .center, .center);
 
     const save_btn_rect = re.rectTakeBottom(&cur_rect, 24);
 
@@ -1009,7 +1062,7 @@ const panel_rect: Rectangle = .init(
     panel_height,
 );
 
-const btn_height = panel_rect.height - 24;
+const btn_height = panel_rect.height - 28;
 
 fn bottomButton(label: [:0]const u8, pos: *Vector2) bool {
     const measure: f32 = @floatFromInt(rl.measureText(label, consts.font_size));
@@ -1053,14 +1106,10 @@ fn addChild(self: *Self, gpa: Allocator, child_v: Module) !void {
 }
 
 fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
-    const panel_contents: Rectangle = .init(0, 0, self.panel_contents_width, panel_rect.height - 10);
-    const panel_base = Vector2
-        .init(panel_rect.x, panel_rect.y)
-        .add(.init(panel_contents.x, panel_contents.y));
+    const panel_contents: Rectangle = .init(panel_rect.x, panel_rect.y + 2, self.panel_contents_width, panel_rect.height - 16);
+    const panel_base = re.rectPos(panel_contents);
 
     _ = rg.scrollPanel(panel_rect, null, panel_contents, &self.panel_scroll, &self.panel_view);
-
-    rl.drawRectangleLinesEx(panel_rect, 2, theme.text_muted);
 
     re.beginScissorModeRec(self.panel_view);
     defer rl.endScissorMode();
@@ -1076,13 +1125,13 @@ fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
         try self.addChild(gpa, .not_gate);
 
     if (bottomButton("split", &btn_pos))
-        try self.addChild(gpa, .{ .split = .init(8, 0, 3) });
+        try self.addChild(gpa, .{ .split = .init(4, 0, 1) });
 
     if (bottomButton("join", &btn_pos))
         try self.addChild(gpa, .{ .join = try .init(gpa, &.{ 2, 2 }) });
 
     if (bottomButton("clock", &btn_pos))
-        try self.addChild(gpa, .{ .clock = .init(2) });
+        try self.addChild(gpa, .{ .clock = .init(1) });
 
     var iter = globals.modules.constIterator();
     while (iter.next()) |entry| {
@@ -1094,8 +1143,8 @@ fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
         if (bottomButton(mod.name, &btn_pos))
             try self.addChild(gpa, .{ .custom = entry.key });
     }
-
-    self.panel_contents_width = btn_pos.x;
+    if (self.panel_contents_width == 0)
+        self.panel_contents_width = btn_pos.x - (2 * btn_spacing);
 }
 
 fn containsChildWithPos(children: SlotMap(Child), pos: Vector2) bool {
@@ -1453,26 +1502,16 @@ fn drawChild(self: *Self, gpa: Allocator, child_key: Child.Key, hover: HoverInfo
         .clock => |clock| try drawClock(gpa, clock, child.pos, hovered_output, selected),
         .custom => |mod_key| try drawCustomModule(gpa, mod_key, child.pos, hovered_input, hovered_output, hover, selected),
     }
+}
 
-    if (selected) {
-        if (child.mod.hasSettings()) {
-            const bounds = try childBounds(gpa, child);
+fn openChildSettings(self: *Self, gpa: Allocator, child_key: Child.Key) !void {
+    const child = self.topModPtr().children.get(child_key).?;
 
-            const btn_size = 30;
-            const btn_rect: Rectangle = .init(
-                bounds.x + bounds.width + 15,
-                bounds.y - btn_size - 10,
-                btn_size,
-                btn_size,
-            );
-
-            if (rg.button(btn_rect, comptimePrint("#{d}#", .{IconName.gear}))) {
-                self.child_settings = .{
-                    .child_key = child_key,
-                    .v = try child.mod.currentSettings(gpa),
-                };
-            }
-        }
+    if (child.mod.hasSettings()) {
+        self.child_settings = .{
+            .child_key = child_key,
+            .v = try child.mod.currentSettings(gpa),
+        };
     }
 }
 
@@ -1572,6 +1611,16 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2) !void 
     }
 }
 
+fn onDoubleClick(self: *Self, gpa: Allocator, hover: HoverInfo) !void {
+    switch (hover) {
+        .child => |child_key| {
+            try self.openChildSettings(gpa, child_key);
+            self.mouse_action = .none;
+        },
+        else => {},
+    }
+}
+
 fn onRightClick(self: *Self) void {
     switch (self.mouse_action) {
         .wire_from, .wire_to => self.mouse_action = .none,
@@ -1580,12 +1629,9 @@ fn onRightClick(self: *Self) void {
 }
 
 fn onUnclick(self: *Self, gpa: Allocator) !void {
-    switch (self.mouse_action) {
-        .drag_module => {
-            self.mouse_action = .none;
-            try globals.saveCustomModules(gpa);
-        },
-        else => {},
+    if (self.mouse_action == .drag_module) {
+        self.mouse_action = .none;
+        try globals.saveCustomModules(gpa);
     }
 }
 

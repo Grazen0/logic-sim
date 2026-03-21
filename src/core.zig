@@ -8,6 +8,7 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const Vector2 = rl.Vector2;
 const Color = rl.Color;
+const Rectangle = rl.Rectangle;
 const SlotMap = structs.SlotMap;
 
 const assert = std.debug.assert;
@@ -75,6 +76,8 @@ pub const Module = union(enum) {
         };
 
         inputs: ArrayList(Input),
+        panel_scroll: Vector2,
+        panel_view: Rectangle,
     };
 
     pub const Join = struct {
@@ -149,6 +152,26 @@ pub const Module = union(enum) {
         self.* = undefined;
     }
 
+    pub fn getInputTooltip(self: *const Self, input: CustomModule.InputRef) ?[:0]const u8 {
+        switch (self.*) {
+            .custom => |mod_key| {
+                const mod = globals.modules.getPtr(mod_key).?;
+                return mod.inputs.get(input.custom).?.name;
+            },
+            else => return null,
+        }
+    }
+
+    pub fn getOutputTooltip(self: *const Self, output: CustomModule.OutputRef) ?[:0]const u8 {
+        switch (self.*) {
+            .custom => |mod_key| {
+                const mod = globals.modules.getPtr(mod_key).?;
+                return mod.outputs.get(output.custom).?.name;
+            },
+            else => return null,
+        }
+    }
+
     pub fn hasSettings(self: Self) bool {
         return switch (self) {
             .logic_gate => true,
@@ -187,7 +210,11 @@ pub const Module = union(enum) {
                     inputs.appendAssumeCapacity(.{ .width = width, .edit = false });
 
                 break :blk .{
-                    .join = .{ .inputs = inputs },
+                    .join = .{
+                        .inputs = inputs,
+                        .panel_scroll = .init(0, 0),
+                        .panel_view = .init(0, 0, 0, 0),
+                    },
                 };
             },
             .clock => |clock| blk: {
