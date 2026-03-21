@@ -147,7 +147,7 @@ pub const ModuleInstance = union(enum) {
         }
 
         fn processInputEvent(self: *@This(), gpa: Allocator) void {
-            var event = self.in_queue.remove();
+            var event = self.in_queue.removeOrNull() orelse return;
             defer event.deinit(gpa);
 
             if (event.in.input) |idx| {
@@ -167,7 +167,7 @@ pub const ModuleInstance = union(enum) {
         }
 
         fn processOutputEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
-            const time = self.next_out.?;
+            const time = self.next_out orelse return &.{};
             self.next_out = null;
 
             const new_output = self.computeOutput();
@@ -237,7 +237,7 @@ pub const ModuleInstance = union(enum) {
         }
 
         fn processInputEvent(self: *@This()) void {
-            const event = self.in_queue.remove();
+            const event = self.in_queue.removeOrNull() orelse return;
             if (self.in == event.in)
                 return;
 
@@ -247,7 +247,7 @@ pub const ModuleInstance = union(enum) {
         }
 
         fn processOutputEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
-            const time = self.next_out.?;
+            const time = self.next_out orelse return &.{};
             self.next_out = null;
 
             const new_out = !self.in;
@@ -320,7 +320,7 @@ pub const ModuleInstance = union(enum) {
         }
 
         pub fn processEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
-            var event = self.in_queue.remove();
+            var event = self.in_queue.removeOrNull() orelse return &.{};
             defer event.deinit(gpa);
 
             if (self.in.len != event.in.len or std.mem.eql(bool, self.in, event.in))
@@ -396,7 +396,7 @@ pub const ModuleInstance = union(enum) {
         }
 
         pub fn processEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
-            var event = self.in_queue.remove();
+            var event = self.in_queue.removeOrNull() orelse return &.{};
             defer event.deinit(gpa);
 
             const input = self.inputs[event.input_idx];
@@ -467,7 +467,7 @@ pub const ModuleInstance = union(enum) {
         }
 
         pub fn processEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
-            var event = self.in_queue.remove();
+            var event = self.in_queue.removeOrNull() orelse return &.{};
             defer event.deinit(gpa);
 
             @memcpy(self.values, event.values);

@@ -35,6 +35,12 @@ pub fn BinaryHeap(comptime T: type, lessThan: fn (T, T) bool) type {
 
         pub fn remove(self: *Self) T {
             assert(self.data.items.len > 0);
+            return self.removeOrNull().?;
+        }
+
+        pub fn removeOrNull(self: *Self) ?T {
+            if (self.data.items.len == 0)
+                return null;
 
             if (self.data.items.len == 1)
                 return self.data.pop().?;
