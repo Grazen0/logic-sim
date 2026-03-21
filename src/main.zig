@@ -94,3 +94,7 @@ pub fn main() anyerror!void {
 
     try globals.saveCustomModules(alloc);
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

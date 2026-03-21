@@ -40,3 +40,12 @@ pub fn touchesSegment(point: Vector2, seg_a: Vector2, seg_b: Vector2, seg_thick:
 
     return meets_x and meets_y and distanceToSegment(point, seg_a, seg_b) < (seg_thick / 2);
 }
+
+pub fn sum(comptime T: type, arr: []const T) T {
+    var s: T = 0;
+
+    for (arr) |n|
+        s += n;
+
+    return s;
+}

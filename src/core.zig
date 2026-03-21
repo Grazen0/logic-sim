@@ -1,4 +1,5 @@
 const std = @import("std");
+const math = @import("./math.zig");
 const rl = @import("raylib");
 const structs = @import("./structs/structs.zig");
 const globals = @import("./globals.zig");
@@ -67,6 +68,38 @@ pub const Module = union(enum) {
         }
     };
 
+    pub const JoinSettings = struct {
+        pub const Input = struct {
+            width: usize,
+            edit: bool,
+        };
+
+        inputs: ArrayList(Input),
+    };
+
+    pub const Join = struct {
+        inputs: []usize,
+
+        pub fn init(gpa: Allocator, inputs: []const usize) !@This() {
+            return .{
+                .inputs = try gpa.dupe(usize, inputs),
+            };
+        }
+
+        pub fn clone(self: @This(), gpa: Allocator) !@This() {
+            return try .init(gpa, self.inputs);
+        }
+
+        pub fn outputWidth(self: @This()) usize {
+            return math.sum(usize, self.inputs);
+        }
+
+        pub fn deinit(self: *@This(), gpa: Allocator) void {
+            gpa.free(self.inputs);
+            self.* = undefined;
+        }
+    };
+
     pub const Clock = struct {
         freq: f32,
 
@@ -88,16 +121,46 @@ pub const Module = union(enum) {
     pub const Settings = union(enum) {
         logic_gate: LogicGateSettings,
         split: SplitSettings,
+        join: JoinSettings,
         clock: ClockSettings,
+
+        pub fn deinit(self: *@This(), gpa: Allocator) void {
+            switch (self.*) {
+                .join => |*join| join.inputs.deinit(gpa),
+                else => {},
+            }
+
+            self.* = undefined;
+        }
     };
 
     logic_gate: LogicGate,
     not_gate,
     split: Split,
+    join: Join,
     clock: Clock,
     custom: CustomModule.Key,
 
-    pub fn currentSettings(self: Self) ?Settings {
+    pub fn deinit(self: *Self, gpa: Allocator) void {
+        switch (self.*) {
+            .join => |*join| join.deinit(gpa),
+            else => {},
+        }
+        self.* = undefined;
+    }
+
+    pub fn hasSettings(self: Self) bool {
+        return switch (self) {
+            .logic_gate => true,
+            .not_gate => false,
+            .split => true,
+            .join => true,
+            .clock => true,
+            .custom => false,
+        };
+    }
+
+    pub fn currentSettings(self: Self, gpa: Allocator) !Settings {
         return switch (self) {
             .logic_gate => |*gate| .{
                 .logic_gate = .{
@@ -106,7 +169,7 @@ pub const Module = union(enum) {
                     .single_wire = gate.single_wire,
                 },
             },
-            .not_gate => null,
+            .not_gate => unreachable,
             .split => |split| .{
                 .split = .{
                     .input_width = split.input_width,
@@ -116,6 +179,16 @@ pub const Module = union(enum) {
                     .output_to = split.output_to,
                     .output_to_edit = false,
                 },
+            },
+            .join => |join| blk: {
+                var inputs: ArrayList(JoinSettings.Input) = try .initCapacity(gpa, join.inputs.len);
+
+                for (join.inputs) |width|
+                    inputs.appendAssumeCapacity(.{ .width = width, .edit = false });
+
+                break :blk .{
+                    .join = .{ .inputs = inputs },
+                };
             },
             .clock => |clock| blk: {
                 var freq_text: [32:0]u8 = .{0} ** 32;
@@ -129,7 +202,7 @@ pub const Module = union(enum) {
                     },
                 };
             },
-            .custom => null,
+            .custom => unreachable,
         };
     }
 };
@@ -146,6 +219,11 @@ pub const CustomModule = struct {
         pub fn init(pos: Vector2, mod: Module) @This() {
             return .{ .pos = pos, .mod = mod };
         }
+
+        pub fn deinit(self: *@This(), gpa: Allocator) void {
+            self.mod.deinit(gpa);
+            self.* = undefined;
+        }
     };
 
     pub const Key = SlotMap(Self).Key;
@@ -156,6 +234,7 @@ pub const CustomModule = struct {
         logic_gate: ?usize,
         not_gate,
         split,
+        join: usize,
         custom: PortKey,
     };
 
@@ -171,6 +250,7 @@ pub const CustomModule = struct {
                 .logic_gate => |i| other.input == .logic_gate and other.input.logic_gate == i,
                 .not_gate => other.input == .not_gate,
                 .split => other.input == .split,
+                .join => |i| other.input == .join and other.input.join == i,
                 .custom => |key| other.input == .custom and other.input.custom.equals(key),
             };
         }
@@ -180,6 +260,7 @@ pub const CustomModule = struct {
         logic_gate,
         not_gate,
         split,
+        join,
         clock,
         custom: PortKey,
     };
@@ -196,6 +277,7 @@ pub const CustomModule = struct {
                 .logic_gate => other.output == .logic_gate,
                 .not_gate => other.output == .not_gate,
                 .split => other.output == .split,
+                .join => other.output == .join,
                 .clock => other.output == .clock,
                 .custom => |key| other.output == .custom and other.output.custom.equals(key),
             };
@@ -289,6 +371,10 @@ pub const CustomModule = struct {
         while (output_iter.nextValue()) |output|
             output.deinit(gpa);
 
+        var children_iter = self.children.iterator();
+        while (children_iter.nextValue()) |child|
+            child.deinit(gpa);
+
         var wire_iter = self.wires.iterator();
         while (wire_iter.nextValue()) |wire|
             wire.deinit(gpa);
@@ -310,6 +396,7 @@ pub const CustomModule = struct {
                 return switch (child.mod) {
                     .logic_gate, .not_gate, .clock => 1,
                     .split => |split| split.outputWidth(),
+                    .join => |join| join.outputWidth(),
                     .custom => |mod_key| blk: {
                         const mod = globals.modules.get(mod_key).?;
                         break :blk mod.outputs.get(ref.output.custom).?.width;
@@ -328,6 +415,7 @@ pub const CustomModule = struct {
                     .logic_gate => |gate| return if (gate.single_wire) gate.input_cnt else 1,
                     .not_gate => return 1,
                     .split => |split| return split.input_width,
+                    .join => |join| return join.inputs[ref.input.join],
                     .clock => unreachable,
                     .custom => |mod_key| {
                         const mod = globals.modules.get(mod_key).?;
@@ -353,26 +441,6 @@ pub const CustomModule = struct {
         return try self.wires.put(gpa, wire);
     }
 
-    pub fn removeWiresBySrc(self: *Self, src: WireSrc) void {
-        var wire_iter = self.wires.constIterator();
-
-        while (wire_iter.next()) |entry| {
-            const wire = entry.val;
-            if (wire.from.equals(src))
-                _ = self.wires.remove(entry.key);
-        }
-    }
-
-    pub fn removeWiresByDest(self: *Self, dest: WireDest) void {
-        var wire_iter = self.wires.constIterator();
-
-        while (wire_iter.next()) |entry| {
-            const wire = entry.val;
-            if (wire.to.equals(dest))
-                _ = self.wires.remove(entry.key);
-        }
-    }
-
     pub fn isWireSrcValid(self: Self, src: WireSrc) bool {
         switch (src) {
             .top_input => |input_key| return self.inputs.hasKey(input_key),
@@ -383,6 +451,7 @@ pub const CustomModule = struct {
                     .logic_gate => ref.output == .logic_gate,
                     .not_gate => ref.output == .not_gate,
                     .split => ref.output == .split,
+                    .join => ref.output == .join,
                     .clock => ref.output == .clock,
                     .custom => |mod_key| blk: {
                         const mod = globals.modules.get(mod_key).?;
@@ -403,6 +472,7 @@ pub const CustomModule = struct {
                     .logic_gate => |gate| if (gate.single_wire) ref.input.logic_gate == null else ref.input.logic_gate.? < gate.input_cnt,
                     .not_gate => ref.input == .not_gate,
                     .split => ref.input == .split,
+                    .join => |join| ref.input.join < join.inputs.len,
                     .clock => false,
                     .custom => |mod_key| blk: {
                         const mod = globals.modules.get(mod_key).?;
@@ -427,6 +497,11 @@ pub const CustomModule = struct {
                 defer removed.deinit(gpa);
             }
         }
+    }
+
+    pub fn removeChildNoAffectWires(self: *Self, gpa: Allocator, child_key: Child.Key) void {
+        var removed = self.children.remove(child_key).?;
+        defer removed.deinit(gpa);
     }
 
     pub fn dependsOn(mod_key: Key, search_key: Key) bool {

@@ -21,8 +21,17 @@ pub const ModuleJson = union(enum) {
     logic_gate: Module.LogicGate,
     not_gate,
     split: Module.Split,
+    join: Module.Join,
     clock: Module.Clock,
     custom: usize,
+
+    pub fn deinit(self: *@This(), gpa: Allocator) void {
+        switch (self.*) {
+            .join => |*join| join.deinit(gpa),
+            else => {},
+        }
+        self.* = undefined;
+    }
 };
 
 const CustomModuleJson = struct {
@@ -31,6 +40,11 @@ const CustomModuleJson = struct {
     pub const Child = struct {
         pos: Vector2,
         mod: ModuleJson,
+
+        pub fn deinit(self: *@This(), gpa: Allocator) void {
+            self.mod.deinit(gpa);
+            self.* = undefined;
+        }
     };
 
     pub const WireSrc = union(enum) {
@@ -41,6 +55,7 @@ const CustomModuleJson = struct {
                 logic_gate,
                 not_gate,
                 split,
+                join,
                 clock,
                 custom: usize,
             },
@@ -55,6 +70,7 @@ const CustomModuleJson = struct {
                 logic_gate: ?usize,
                 not_gate,
                 split,
+                join: usize,
                 custom: usize,
             },
         },
@@ -83,6 +99,9 @@ const CustomModuleJson = struct {
 
         for (self.outputs) |*output|
             output.deinit(gpa);
+
+        for (self.children) |*child|
+            child.deinit(gpa);
 
         for (self.wires) |*wire|
             wire.deinit(gpa);
@@ -152,13 +171,13 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
 
     var mods_json: ArrayList(CustomModuleJson) = .empty;
 
-    var mods_iter = modules.constIterator();
+    var mods_iter = modules.iterator();
     while (mods_iter.next()) |mod_entry| {
         const mod_key = mod_entry.key;
         const mod = mod_entry.val;
 
-        const output_idxs = output_idxs_all.get(mod_key).?;
-        const input_idxs = input_idxs_all.get(mod_key).?;
+        const output_idxs = output_idxs_all.getPtr(mod_key).?;
+        const input_idxs = input_idxs_all.getPtr(mod_key).?;
 
         var inputs_json = try gpa.alloc(CustomModule.Port, mod.inputs.count);
         var inputs_iter = mod.inputs.constIterator();
@@ -166,7 +185,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
         while (inputs_iter.next()) |entry| {
             const input_key = entry.key;
             const input = entry.val;
-            const idx = input_idxs.get(input_key).?.*;
+            const idx = input_idxs.getPtr(input_key).?.*;
 
             inputs_json[idx] = .{
                 .name = if (input.name) |name| try gpa.dupeZ(u8, name) else null,
@@ -181,7 +200,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
         while (outputs_iter.next()) |entry| {
             const output_key = entry.key;
             const output = entry.val;
-            const idx = output_idxs.get(output_key).?.*;
+            const idx = output_idxs.getPtr(output_key).?.*;
 
             outputs_json[idx] = .{
                 .name = if (output.name) |name| try gpa.dupeZ(u8, name) else null,
@@ -206,11 +225,12 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
             children_json[i] = .{
                 .pos = child.pos,
                 .mod = switch (child.mod) {
-                    .split => |split| .{ .split = split },
                     .logic_gate => |gate| .{ .logic_gate = gate },
                     .not_gate => .not_gate,
+                    .split => |split| .{ .split = split },
+                    .join => |join| .{ .join = try join.clone(gpa) },
                     .clock => |clock| .{ .clock = clock },
-                    .custom => |mkey| .{ .custom = mod_idxs.get(mkey).?.* },
+                    .custom => |mkey| .{ .custom = mod_idxs.getPtr(mkey).?.* },
                 },
             };
         }
@@ -223,37 +243,39 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
         while (wire_iter.nextValue()) |wire| : (i += 1) {
             wires_json[i] = .{
                 .from = switch (wire.from) {
-                    .top_input => |input_key| .{ .top_input = input_idxs.get(input_key).?.* },
+                    .top_input => |input_key| .{ .top_input = input_idxs.getPtr(input_key).?.* },
                     .child_output => |ref| .{
                         .child_output = .{
-                            .child_key = child_idxs.get(ref.child_key).?.*,
+                            .child_key = child_idxs.getPtr(ref.child_key).?.*,
                             .output = switch (ref.output) {
                                 .logic_gate => .logic_gate,
                                 .not_gate => .not_gate,
                                 .split => .split,
+                                .join => .join,
                                 .clock => .clock,
                                 .custom => |output_key| blk: {
-                                    const child_mod_key = mod.children.get(ref.child_key).?.mod.custom;
-                                    const child_output_idxs = output_idxs_all.get(child_mod_key).?;
-                                    break :blk .{ .custom = child_output_idxs.get(output_key).?.* };
+                                    const child_mod_key = mod.children.getPtr(ref.child_key).?.mod.custom;
+                                    const child_output_idxs = output_idxs_all.getPtr(child_mod_key).?;
+                                    break :blk .{ .custom = child_output_idxs.getPtr(output_key).?.* };
                                 },
                             },
                         },
                     },
                 },
                 .to = switch (wire.to) {
-                    .top_output => |key| .{ .top_output = output_idxs.get(key).?.* },
+                    .top_output => |key| .{ .top_output = output_idxs.getPtr(key).?.* },
                     .child_input => |ref| .{
                         .child_input = .{
-                            .child_key = child_idxs.get(ref.child_key).?.*,
+                            .child_key = child_idxs.getPtr(ref.child_key).?.*,
                             .input = switch (ref.input) {
-                                .logic_gate => |idx| .{ .logic_gate = idx },
+                                .logic_gate => |input_idx| .{ .logic_gate = input_idx },
                                 .not_gate => .not_gate,
                                 .split => .split,
+                                .join => |input_idx| .{ .join = input_idx },
                                 .custom => |input_key| blk: {
-                                    const child_mod_key = mod.children.get(ref.child_key).?.mod.custom;
-                                    const child_input_idxs = input_idxs_all.get(child_mod_key).?;
-                                    break :blk .{ .custom = child_input_idxs.get(input_key).?.* };
+                                    const child_mod_key = mod.children.getPtr(ref.child_key).?.mod.custom;
+                                    const child_input_idxs = input_idxs_all.getPtr(child_mod_key).?;
+                                    break :blk .{ .custom = child_input_idxs.getPtr(input_key).?.* };
                                 },
                             },
                         },
@@ -373,6 +395,7 @@ pub fn loadCustomModulesFromStr(gpa: Allocator, data_str: []const u8) !void {
                     .logic_gate => |gate| .{ .logic_gate = gate },
                     .not_gate => .not_gate,
                     .split => |split| .{ .split = split },
+                    .join => |join| .{ .join = try join.clone(gpa) },
                     .clock => |clock| .{ .clock = clock },
                     .custom => |mod_idx| .{ .custom = mod_keys[mod_idx] },
                 },
@@ -394,6 +417,7 @@ pub fn loadCustomModulesFromStr(gpa: Allocator, data_str: []const u8) !void {
                                 .logic_gate => .logic_gate,
                                 .not_gate => .not_gate,
                                 .split => .split,
+                                .join => .join,
                                 .clock => .clock,
                                 .custom => |output_idx| blk: {
                                     const child_mod_idx = mod_json.children[ref.child_key].mod.custom;
@@ -413,6 +437,7 @@ pub fn loadCustomModulesFromStr(gpa: Allocator, data_str: []const u8) !void {
                                 .logic_gate => |input_idx| .{ .logic_gate = input_idx },
                                 .not_gate => .not_gate,
                                 .split => .split,
+                                .join => |input_idx| .{ .join = input_idx },
                                 .custom => |input_idx| blk: {
                                     const child_mod_idx = mod_json.children[ref.child_key].mod.custom;
                                     const child_input_keys = input_keys_all[child_mod_idx];
@@ -429,9 +454,9 @@ pub fn loadCustomModulesFromStr(gpa: Allocator, data_str: []const u8) !void {
         }
 
         const key = mod_keys[i];
-        const mod = modules.get(key).?;
+        const mod = modules.getPtr(key).?;
 
-        modules.get(key).?.* = .{
+        modules.getPtr(key).?.* = .{
             .name = try gpa.dupeZ(u8, mod_json.name),
             .color = .fromInt(mod_json.color),
             .inputs = mod.inputs,

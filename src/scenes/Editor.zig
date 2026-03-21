@@ -188,6 +188,8 @@ child_settings: ?struct {
 },
 debounce_timer: usize,
 
+const init_time = 0;
+
 pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self {
     const prng = try gpa.create(DefaultPrng);
 
@@ -210,8 +212,8 @@ pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self 
     return .{
         .ctx = ctx,
         .prng = prng,
-        .top_inst = try .init(gpa, mod_key),
-        .time = 0,
+        .top_inst = try .init(gpa, mod_key, init_time),
+        .time = init_time,
         .disabled_modules = disabled_modules,
         .mouse_action = .none,
         .wire_points = .empty,
@@ -233,6 +235,9 @@ pub fn deinit(self: *Self, gpa: Allocator) void {
     if (self.mod_settings) |*settings|
         settings.deinit(gpa);
 
+    if (self.child_settings) |*settings|
+        settings.v.deinit(gpa);
+
     gpa.destroy(self.prng);
     self.* = undefined;
 }
@@ -246,7 +251,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     if (self.mod_settings != null or self.child_settings != null)
         rg.lock();
 
-    const top_mod = self.topMod();
+    const top_mod = self.topModPtr();
 
     const mouse = rl.getMousePosition();
     const hover = try self.getHoverInfo(gpa, mouse);
@@ -294,7 +299,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
 
     switch (self.mouse_action) {
         .drag_module => |drag| {
-            const dragged_child = top_mod.children.get(drag.child_key).?;
+            const dragged_child = top_mod.children.getPtr(drag.child_key).?;
             const clamp_bounds = try childClampBounds(gpa, dragged_child.*);
             dragged_child.pos = mouse.add(drag.offset).clamp(clamp_bounds[0], clamp_bounds[1]);
         },
@@ -342,6 +347,7 @@ fn drawChildSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.Settings
     switch (settings.*) {
         .logic_gate => |*s| try self.drawLogicGateSettingsMenu(gpa, s),
         .split => |*s| try self.drawSplitSettingsMenu(gpa, s),
+        .join => |*s| try self.drawJoinSettingsMenu(gpa, s),
         .clock => |*s| try self.drawClockSettingsMenu(gpa, s),
     }
 }
@@ -462,6 +468,76 @@ fn drawSplitSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.SplitSet
     }
 }
 
+fn drawJoinSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.JoinSettings) !void {
+    const win_rect = re.rectWithCenter(consts.screen_size.scale(0.5), .init(400, 350));
+
+    if (rg.windowBox(win_rect, "Join settings") == 1) {
+        try self.closeChildSettings(gpa, false);
+        return;
+    }
+
+    const font = rl.getFontDefault() catch unreachable;
+
+    var cur_rect = win_rect;
+    _ = re.rectTakeTop(&cur_rect, 20); // window header height
+    cur_rect = re.rectPad(cur_rect, -win_pad, -win_pad);
+
+    var inputs_lbl_rect = re.rectTakeTop(&cur_rect, 30);
+    const new_input_rect = re.rectTakeRight(&inputs_lbl_rect, 40);
+    _ = re.rectTakeTop(&cur_rect, menu_label_space);
+    const inputs_rect = re.rectTakeTop(&cur_rect, 140);
+    _ = re.rectTakeTop(&cur_rect, menu_element_space);
+
+    re.drawTextAligned(font, "Inputs:", re.rectAnchor(inputs_lbl_rect, .left, .center), 24, 2.4, theme.text, .left, .center);
+
+    if (rg.button(new_input_rect, "+")) {
+        try settings.inputs.append(gpa, .{
+            .width = 1,
+            .edit = false,
+        });
+    }
+
+    rl.drawRectangleLinesEx(inputs_rect, 2, .red);
+
+    const item_height = 30;
+    const item_space = 5;
+    var s: usize = 0;
+
+    for (0.., settings.inputs.items) |i, *input| {
+        var rect: Rectangle = .init(
+            inputs_rect.x,
+            inputs_rect.y + @as(f32, @floatFromInt(i)) * (item_height + item_space),
+            inputs_rect.width,
+            item_height,
+        );
+
+        const width_box = re.rectTakeRight(&rect, 60);
+
+        const range_str = try allocPrintSentinel(gpa, "{d}:{d}", .{ s + input.width - 1, s }, 0);
+        defer gpa.free(range_str);
+
+        rl.drawRectangleLinesEx(rect, 2, .green);
+        re.drawTextAligned(font, range_str, re.rectAnchor(rect, .left, .center), 24, 2.4, theme.text, .left, .center);
+
+        re.valueBoxT(usize, width_box, "", &input.width, consts.min_port_width, consts.max_port_width, &input.edit);
+
+        s += input.width;
+    }
+
+    const output_width_rect = re.rectTakeTop(&cur_rect, 30);
+    const output_width_str = try allocPrintSentinel(gpa, "Output width: {d}", .{s}, 0);
+    defer gpa.free(output_width_str);
+
+    re.drawTextAligned(font, output_width_str, re.rectAnchor(output_width_rect, .left, .center), 24, 2.4, theme.text, .left, .center);
+
+    const save_btn_rect = re.rectTakeBottom(&cur_rect, 24);
+
+    if (rg.button(save_btn_rect, "Save")) {
+        try self.closeChildSettings(gpa, true);
+        return;
+    }
+}
+
 fn drawClockSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.ClockSettings) !void {
     const win_rect = re.rectWithCenter(consts.screen_size.scale(0.5), .init(400, 160));
 
@@ -503,40 +579,18 @@ fn drawClockSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.ClockSet
 }
 
 fn removeWire(self: *Self, gpa: Allocator, wire_key: CustomModule.WireKey) !void {
-    const top_mod = self.topMod();
-    var wire = top_mod.wires.remove(wire_key).?;
-    defer wire.deinit(gpa);
-
-    const wire_width = top_mod.wireDestWidth(wire.to);
-    const false_values = try gpa.alloc(bool, wire_width);
-    defer gpa.free(false_values);
-
-    @memset(false_values, false);
-
-    var affected = try self.top_inst.writeWireDest(gpa, wire.to, false_values, self.time);
-    defer if (affected) |*af| af.deinit(gpa);
+    const top_mod = self.topModPtr();
+    var removed_wire = top_mod.wires.remove(wire_key).?;
+    defer removed_wire.deinit(gpa);
 
     try globals.saveCustomModules(gpa);
+
+    var affected = try self.top_inst.removeWire(gpa, removed_wire, self.time);
+    defer if (affected) |*af| af.deinit(gpa);
 }
 
 fn removeChild(self: *Self, gpa: Allocator, child_key: Child.Key) !void {
-    const top_mod = self.topMod();
-    var wire_iter = top_mod.wires.constIterator();
-
-    while (wire_iter.next()) |entry| {
-        const wire = entry.val;
-
-        const matches_from = wire.from == .child_output and wire.from.child_output.child_key.equals(child_key);
-        const matches_to = wire.to == .child_input and wire.to.child_input.child_key.equals(child_key);
-
-        if (matches_from or matches_to)
-            try self.removeWire(gpa, entry.key);
-    }
-
-    var child_inst = self.top_inst.children.remove(child_key).?;
-    defer child_inst.deinit(gpa);
-
-    _ = top_mod.children.remove(child_key).?;
+    try self.top_inst.removeChildWithMod(gpa, child_key, self.time);
     try globals.saveCustomModules(gpa);
 }
 
@@ -765,7 +819,7 @@ fn drawPortSettings(self: *Self, base_pos: Vector2, cnt_width: f32, port_cnt: us
 }
 
 fn openModSettings(self: *Self, gpa: Allocator) !void {
-    const top_mod = self.topMod();
+    const top_mod = self.topModPtr();
 
     var inputs: SecondaryMap(CustomModule.PortKey, ModuleSettings.PortSettings) = .empty;
     var input_iter = top_mod.inputs.constIterator();
@@ -796,34 +850,10 @@ fn trimFixedBufferZ(comptime T: type, buf: []const T, values_to_strip: []const T
     return std.mem.trim(T, buf[0..len], values_to_strip);
 }
 
-fn removeWiresBySrc(gpa: Allocator, mod: *CustomModule, src: WireSrc) void {
-    var wire_iter = mod.wires.constIterator();
-
-    while (wire_iter.next()) |entry| {
-        const wire = entry.val;
-        if (wire.from.equals(src)) {
-            var removed = mod.wires.remove(entry.key).?;
-            defer removed.deinit(gpa);
-        }
-    }
-}
-
-fn removeWireByDest(gpa: Allocator, mod: *CustomModule, dest: WireDest) void {
-    var wire_iter = mod.wires.constIterator();
-
-    while (wire_iter.next()) |entry| {
-        const wire = entry.val;
-        if (wire.to.equals(dest)) {
-            var removed = mod.wires.remove(entry.key).?;
-            defer removed.deinit(gpa);
-        }
-    }
-}
-
 fn saveModSettings(self: *Self, gpa: Allocator) !void {
     assert(self.mod_settings != null);
 
-    const top_mod = self.topMod();
+    const top_mod = self.topModPtr();
     const settings = &self.mod_settings.?;
 
     const mod_name_trimmed = trimFixedBufferZ(u8, &settings.name_buf, " ");
@@ -833,70 +863,69 @@ fn saveModSettings(self: *Self, gpa: Allocator) !void {
         top_mod.name = try gpa.dupeZ(u8, mod_name_trimmed);
     }
 
-    try self.savePorts(gpa, settings.inputs, &self.top_inst.inputs, &top_mod.inputs);
-    try self.savePorts(gpa, settings.outputs, &self.top_inst.outputs, &top_mod.outputs);
+    try savePorts(gpa, settings.inputs, &self.top_inst.inputs, &top_mod.inputs);
+    try savePorts(gpa, settings.outputs, &self.top_inst.outputs, &top_mod.outputs);
 
     top_mod.color = settings.color;
-    self.top_inst.pruneInvalidWires(gpa);
+
+    try self.top_inst.pruneInvalidWiresWithMod(gpa, self.time);
+
+    var mods_iter = globals.modules.iterator();
+    while (mods_iter.nextValue()) |mod|
+        mod.pruneInvalidWires(gpa);
 }
 
-fn savePorts(self: *Self, gpa: Allocator, ports: ModuleSettings.PortSettingsContainers, port_insts: *SecondaryMap(CustomModule.PortKey, []bool), dest: *SlotMap(CustomModule.Port)) !void {
+fn savePorts(gpa: Allocator, ports: ModuleSettings.PortSettingsContainers, port_insts: *SecondaryMap(CustomModule.PortKey, []bool), dest: *SlotMap(CustomModule.Port)) !void {
     var port_iter = dest.iterator();
 
     while (port_iter.next()) |entry| {
-        const input_key = entry.key;
-        const input = entry.val;
+        const port_key = entry.key;
+        const port = entry.val;
 
-        const input_settings = ports.cur.get(input_key) orelse {
-            var removed = dest.remove(input_key).?;
+        const port_settings = ports.cur.get(port_key) orelse {
+            var removed = dest.remove(port_key).?;
             defer removed.deinit(gpa);
             continue;
         };
 
-        if (input.name) |name|
+        if (port.name) |name|
             gpa.free(name);
 
-        const name_trimmed = trimFixedBufferZ(u8, &input_settings.name_buf, " ");
+        const name_trimmed = trimFixedBufferZ(u8, &port_settings.name_buf, " ");
 
         if (name_trimmed.len == 0) {
-            input.name = null;
+            port.name = null;
         } else {
-            input.name = try gpa.dupeZ(u8, name_trimmed);
+            port.name = try gpa.dupeZ(u8, name_trimmed);
         }
 
-        input.order = input_settings.order;
+        port.order = port_settings.order;
 
-        if (input.width != input_settings.width) {
-            input.width = input_settings.width;
+        if (port.width != port_settings.width) {
+            port.width = port_settings.width;
 
-            const input_values = &port_insts.get(input_key).?.*;
-            gpa.free(input_values.*);
+            const port_values = port_insts.getPtr(port_key).?;
+            gpa.free(port_values.*);
 
-            input_values.* = try gpa.alloc(bool, input.width);
-            @memset(input_values.*, false);
-
-            // We need to remove wires connected to ports that have been just
-            // deleted in occurrences of this module.
-            var mods_iter = globals.modules.iterator();
-            while (mods_iter.nextValue()) |mod|
-                mod.pruneInvalidWires(gpa);
+            port_values.* = try gpa.alloc(bool, port.width);
+            @memset(port_values.*, false);
         }
     }
 
-    for (ports.new.items) |input_settings| {
-        const name_trimmed = trimFixedBufferZ(u8, &input_settings.name_buf, " ");
+    for (ports.new.items) |port_settings| {
+        const name_trimmed = trimFixedBufferZ(u8, &port_settings.name_buf, " ");
 
-        const new_input: CustomModule.Port = .{
+        const new_port: CustomModule.Port = .{
             .name = if (name_trimmed.len != 0) try gpa.dupeZ(u8, name_trimmed) else null,
-            .width = input_settings.width,
-            .order = input_settings.order,
+            .width = port_settings.width,
+            .order = port_settings.order,
         };
-        const new_input_key = try dest.put(gpa, new_input);
+        const new_port_key = try dest.put(gpa, new_port);
 
-        const new_input_values = try gpa.alloc(bool, input_settings.width);
-        @memset(new_input_values, false);
+        const new_port_values = try gpa.alloc(bool, port_settings.width);
+        @memset(new_port_values, false);
 
-        _ = try self.top_inst.inputs.put(gpa, new_input_key, new_input_values);
+        _ = try port_insts.put(gpa, new_port_key, new_port_values);
     }
 }
 
@@ -913,94 +942,53 @@ fn closeModSettings(self: *Self, gpa: Allocator, save: bool) !void {
 }
 
 fn closeChildSettings(self: *Self, gpa: Allocator, save: bool) !void {
-    const settings = self.child_settings orelse unreachable;
+    const top_mod = self.topModPtr();
+    var settings = self.child_settings orelse unreachable;
+    defer settings.v.deinit(gpa);
+    self.child_settings = null;
 
     if (save) {
+        const child = top_mod.children.getPtr(settings.child_key).?;
+
         switch (settings.v) {
-            .logic_gate => try self.saveLogicGateSettings(gpa),
-            .split => try self.saveSplitSettings(gpa),
-            .clock => self.saveClockSettings(),
+            .logic_gate => saveLogicGateSettings(&child.mod.logic_gate, settings.v.logic_gate),
+            .split => saveSplitSettings(&child.mod.split, settings.v.split),
+            .join => try saveJoinSettings(gpa, &child.mod.join, settings.v.join),
+            .clock => saveClockSettings(&child.mod.clock, settings.v.clock),
         }
 
+        try self.top_inst.pruneInvalidWiresWithMod(gpa, self.time);
         try globals.saveCustomModules(gpa);
-    }
 
-    self.child_settings = null;
+        try self.top_inst.reinstantiateChild(gpa, settings.child_key, self.time);
+    }
 }
 
-fn saveLogicGateSettings(self: *Self, gpa: Allocator) !void {
-    const settings = self.child_settings orelse unreachable;
-    const new = settings.v.logic_gate;
-
-    const top_mod = self.topMod();
-    const gate = &top_mod.children.get(settings.child_key).?.mod.logic_gate;
-    const gate_inst = &self.top_inst.children.get(settings.child_key).?.logic_gate;
-
+fn saveLogicGateSettings(gate: *Module.LogicGate, new: Module.LogicGateSettings) void {
     gate.single_wire = new.single_wire;
-
-    if (new.input_cnt != gate.input_cnt) {
-        gate.input_cnt = new.input_cnt;
-
-        gpa.free(gate_inst.inputs);
-        gate_inst.inputs = try gpa.alloc(bool, new.input_cnt);
-        @memset(gate_inst.inputs, false);
-
-        try gate_inst.writeInput(gpa, null, gate_inst.inputs, self.time);
-    }
-
-    self.top_inst.pruneInvalidWires(gpa);
+    gate.input_cnt = new.input_cnt;
 }
 
-fn saveSplitSettings(self: *Self, gpa: Allocator) !void {
-    const settings = self.child_settings orelse unreachable;
-    const new = settings.v.split;
-
-    const top_mod = self.topMod();
-    const child = &top_mod.children.get(settings.child_key).?.mod.split;
-    const child_inst = &self.top_inst.children.get(settings.child_key).?.split;
-
-    if (child.input_width != new.input_width) {
-        removeWireByDest(gpa, self.topMod(), .{ .child_input = .{ .child_key = settings.child_key, .input = .split } });
-
-        child.input_width = new.input_width;
-
-        gpa.free(child_inst.in);
-        child_inst.in = try gpa.alloc(bool, child.input_width);
-        @memset(child_inst.in, false);
-    }
-
-    const prev_output_width = child.outputWidth();
-
-    child.output_from = new.output_from;
-    child.output_to = new.output_to;
-    child_inst.output_from = new.output_from;
-
-    if (child.outputWidth() != prev_output_width) {
-        removeWiresBySrc(gpa, self.topMod(), .{ .child_output = .{ .child_key = settings.child_key, .output = .split } });
-
-        gpa.free(child_inst.out);
-        child_inst.out = try gpa.alloc(bool, child.outputWidth());
-    }
-
-    // TODO: this really sucks
-    // child_inst.update();
-    self.top_inst.pruneInvalidWires(gpa);
+fn saveSplitSettings(split: *Module.Split, new: Module.SplitSettings) void {
+    split.input_width = new.input_width;
+    split.output_from = new.output_from;
+    split.output_to = new.output_to;
 }
 
-fn saveClockSettings(self: *Self) void {
-    const settings = self.child_settings orelse unreachable;
-    const new = settings.v.clock;
+fn saveJoinSettings(gpa: Allocator, join: *Module.Join, new: Module.JoinSettings) !void {
+    gpa.free(join.inputs);
+    join.inputs = try gpa.alloc(usize, new.inputs.items.len);
 
-    const top_mod = self.topMod();
-    const child = &top_mod.children.get(settings.child_key).?.mod.clock;
-    const child_inst = &self.top_inst.children.get(settings.child_key).?.clock;
+    for (0.., new.inputs.items) |i, s|
+        join.inputs[i] = s.width;
+}
 
-    child.freq = new.freq;
-    child_inst.freq = new.freq;
+fn saveClockSettings(clock: *Module.Clock, new: Module.ClockSettings) void {
+    clock.freq = new.freq;
 }
 
 fn drawTopBar(self: *Self, gpa: Allocator) !void {
-    const top_mod = self.topMod();
+    const top_mod = self.topModPtr();
 
     if (rg.button(.init(15, 10, 40, 40), comptimePrint("#{d}#", .{IconName.arrow_left})))
         self.ctx.next_scene = .{ .selector = .{ .delete_mod = null } };
@@ -1043,12 +1031,10 @@ fn childClampBounds(gpa: Allocator, child: Child) !struct { Vector2, Vector2 } {
     };
 }
 
-fn addChildModule(self: *Self, gpa: Allocator, child_v: Module) !void {
-    const top_mod = self.topMod();
+fn addChild(self: *Self, gpa: Allocator, child_v: Module) !void {
+    const top_mod = self.topModPtr();
 
     var child: Child = .init(consts.screen_size.scale(0.5), child_v);
-    const child_inst: ModuleInstance = try .init(gpa, child.mod);
-
     const clamp_bounds = try childClampBounds(gpa, child);
 
     while (containsChildWithPos(top_mod.children, child.pos)) {
@@ -1060,11 +1046,10 @@ fn addChildModule(self: *Self, gpa: Allocator, child_v: Module) !void {
     }
 
     const child_key = try top_mod.children.put(gpa, child);
-    _ = try self.top_inst.children.put(gpa, child_key, child_inst);
-
-    self.selection = .{ .child = child_key };
-
     try globals.saveCustomModules(gpa);
+
+    try self.top_inst.addChild(gpa, child_key, self.time);
+    self.selection = .{ .child = child_key };
 }
 
 fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
@@ -1084,17 +1069,20 @@ fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
 
     for (std.enums.values(Module.LogicGate.Kind)) |kind| {
         if (bottomButton(@tagName(kind), &btn_pos))
-            try self.addChildModule(gpa, .{ .logic_gate = .init(kind) });
+            try self.addChild(gpa, .{ .logic_gate = .init(kind) });
     }
 
     if (bottomButton("not", &btn_pos))
-        try self.addChildModule(gpa, .not_gate);
+        try self.addChild(gpa, .not_gate);
 
     if (bottomButton("split", &btn_pos))
-        try self.addChildModule(gpa, .{ .split = .init(8, 0, 3) });
+        try self.addChild(gpa, .{ .split = .init(8, 0, 3) });
+
+    if (bottomButton("join", &btn_pos))
+        try self.addChild(gpa, .{ .join = try .init(gpa, &.{ 2, 2 }) });
 
     if (bottomButton("clock", &btn_pos))
-        try self.addChildModule(gpa, .{ .clock = .init(2) });
+        try self.addChild(gpa, .{ .clock = .init(2) });
 
     var iter = globals.modules.constIterator();
     while (iter.next()) |entry| {
@@ -1104,7 +1092,7 @@ fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
         defer rg.enable();
 
         if (bottomButton(mod.name, &btn_pos))
-            try self.addChildModule(gpa, .{ .custom = entry.key });
+            try self.addChild(gpa, .{ .custom = entry.key });
     }
 
     self.panel_contents_width = btn_pos.x;
@@ -1146,8 +1134,8 @@ fn drawWireLines(start: Vector2, end: Vector2, points: []Vector2, thick: f32, co
 }
 
 fn drawTopInput(self: Self, gpa: Allocator, input_key: CustomModule.PortKey, hover: HoverInfo) !void {
-    const input = self.topMod().inputs.get(input_key).?.*;
-    const values = self.top_inst.inputs.get(input_key).?.*;
+    const input = self.topModPtr().inputs.get(input_key).?;
+    const values = self.top_inst.inputs.get(input_key).?;
 
     const btn_pos = self.topInputBtnPos(input_key);
     const pin_pos = self.topInputPosPin(input_key);
@@ -1160,8 +1148,8 @@ fn drawTopInput(self: Self, gpa: Allocator, input_key: CustomModule.PortKey, hov
 }
 
 fn drawTopOutput(self: Self, gpa: Allocator, output_key: CustomModule.PortKey, hover: HoverInfo) !void {
-    const output = self.topMod().outputs.get(output_key).?.*;
-    const value = self.top_inst.outputs.get(output_key).?.*;
+    const output = self.topModPtr().outputs.get(output_key).?;
+    const value = self.top_inst.outputs.get(output_key).?;
 
     const btn_pos = self.topOutputPosBtn(output_key);
     const pin_pos = self.topOutputPinPos(output_key);
@@ -1179,7 +1167,7 @@ fn drawSimulation(self: *Self, gpa: Allocator, mouse: Vector2, hover: HoverInfo)
     re.beginScissorModeRec(sim_rect);
     defer rl.endScissorMode();
 
-    const top_mod = self.topMod();
+    const top_mod = self.topModPtr();
 
     var wire_iter = top_mod.wires.constIterator();
     while (wire_iter.next()) |entry| {
@@ -1266,6 +1254,10 @@ fn splitBounds(gpa: Allocator, split: Module.Split, pos: Vector2) !Rectangle {
     return moduleRectangle(pos, range_str, 1);
 }
 
+fn joinBounds(join: Module.Join, pos: Vector2) Rectangle {
+    return moduleRectangle(pos, "join", join.inputs.len);
+}
+
 fn clockBounds(gpa: Allocator, clock: Module.Clock, pos: Vector2) !Rectangle {
     const range_str = try clock.allocFmtFreq(gpa);
     defer gpa.free(range_str);
@@ -1286,8 +1278,9 @@ fn childBounds(gpa: Allocator, child: Child) !Rectangle {
         .logic_gate => |gate| logicGateBounds(child.pos, gate),
         .not_gate => notGateBounds(child.pos),
         .split => |split| try splitBounds(gpa, split, child.pos),
+        .join => |join| joinBounds(join, child.pos),
         .clock => |clock| try clockBounds(gpa, clock, child.pos),
-        .custom => |mod_key| customModuleBounds(child.pos, globals.modules.get(mod_key).?.*),
+        .custom => |mod_key| customModuleBounds(child.pos, globals.modules.get(mod_key).?),
     };
 }
 
@@ -1374,6 +1367,25 @@ fn drawSplit(gpa: Allocator, split: Module.Split, pos: Vector2, hovered_input: b
     try drawPort(gpa, try splitOutputPos(gpa, split, pos), hovered_output, split.outputWidth());
 }
 
+fn drawJoin(gpa: Allocator, join: Module.Join, pos: Vector2, hovered_input: bool, hovered_output: bool, hover: HoverInfo, selected: bool) !void {
+    const font = rl.getFontDefault() catch unreachable;
+    const bounds = joinBounds(join, pos);
+    const bounds_center = re.rectCenter(bounds);
+
+    if (selected)
+        rl.drawRectangleRec(re.rectPad(bounds, selection_pad, selection_pad), theme.selection_border);
+
+    rl.drawRectangleRec(bounds, theme.join);
+    re.drawTextAligned(font, "join", bounds_center, consts.font_size, consts.font_spacing, theme.text, .center, .center);
+
+    for (0..join.inputs.len) |input_idx| {
+        const highlight = hovered_input and hover.child_input.input.join == input_idx;
+        try drawPort(gpa, joinInputPos(join, pos, input_idx), highlight, join.inputs[input_idx]);
+    }
+
+    try drawPort(gpa, joinOutputPos(join, pos), hovered_output, join.outputWidth());
+}
+
 fn drawClock(gpa: Allocator, clock: Module.Clock, pos: Vector2, hovered_output: bool, selected: bool) !void {
     const font = rl.getFontDefault() catch unreachable;
     const bounds = try clockBounds(gpa, clock, pos);
@@ -1393,7 +1405,7 @@ fn drawClock(gpa: Allocator, clock: Module.Clock, pos: Vector2, hovered_output: 
 
 fn drawCustomModule(gpa: Allocator, mod_key: CustomModule.Key, pos: Vector2, hovered_input: bool, hovered_output: bool, hover: HoverInfo, selected: bool) !void {
     const font = rl.getFontDefault() catch unreachable;
-    const mod = globals.modules.get(mod_key).?.*;
+    const mod = globals.modules.get(mod_key).?;
     const bounds = customModuleBounds(pos, mod);
     const bounds_center = re.rectCenter(bounds);
 
@@ -1424,8 +1436,8 @@ fn drawCustomModule(gpa: Allocator, mod_key: CustomModule.Key, pos: Vector2, hov
 }
 
 fn drawChild(self: *Self, gpa: Allocator, child_key: Child.Key, hover: HoverInfo) !void {
-    const top_mod = self.topMod();
-    const child = top_mod.children.get(child_key).?.*;
+    const top_mod = self.topModPtr();
+    const child = top_mod.children.get(child_key).?;
 
     const selected = self.selection == .child and self.selection.child.equals(child_key);
 
@@ -1437,13 +1449,13 @@ fn drawChild(self: *Self, gpa: Allocator, child_key: Child.Key, hover: HoverInfo
         .logic_gate => |gate| try drawLogicGate(gpa, gate, child.pos, hovered_input, hovered_output, hover, selected),
         .not_gate => drawNotGate(child.pos, hovered_input, hovered_output, selected),
         .split => |split| try drawSplit(gpa, split, child.pos, hovered_input, hovered_output, selected),
+        .join => |join| try drawJoin(gpa, join, child.pos, hovered_input, hovered_output, hover, selected),
         .clock => |clock| try drawClock(gpa, clock, child.pos, hovered_output, selected),
         .custom => |mod_key| try drawCustomModule(gpa, mod_key, child.pos, hovered_input, hovered_output, hover, selected),
     }
 
     if (selected) {
-        const cur_settings = child.mod.currentSettings();
-        if (cur_settings) |cur_settings_v| {
+        if (child.mod.hasSettings()) {
             const bounds = try childBounds(gpa, child);
 
             const btn_size = 30;
@@ -1457,7 +1469,7 @@ fn drawChild(self: *Self, gpa: Allocator, child_key: Child.Key, hover: HoverInfo
             if (rg.button(btn_rect, comptimePrint("#{d}#", .{IconName.gear}))) {
                 self.child_settings = .{
                     .child_key = child_key,
-                    .v = cur_settings_v,
+                    .v = try child.mod.currentSettings(gpa),
                 };
             }
         }
@@ -1465,26 +1477,23 @@ fn drawChild(self: *Self, gpa: Allocator, child_key: Child.Key, hover: HoverInfo
 }
 
 fn addWire(self: *Self, gpa: Allocator, wire: Wire) !void {
-    const top_mod = self.topMod();
+    const top_mod = self.topModPtr();
 
     // Only create wire if port widths match
     if (top_mod.wireSrcWidth(wire.from) == top_mod.wireDestWidth(wire.to)) {
         const new_wire_key = try top_mod.addWireOrModifyExisting(gpa, wire);
-        // const from_values = self.top_inst.readWireSrc(wire.from);
+        try self.top_inst.addWire(gpa, new_wire_key, self.time);
 
-        // TODO: check this
-        // try self.top_inst.writeWireDest(gpa, wire.to, from_values, self.time);
         self.selection = .{ .wire = new_wire_key };
+        try globals.saveCustomModules(gpa);
     }
 
     self.mouse_action = .none;
-
-    try globals.saveCustomModules(gpa);
 }
 
 // TODO: this sucks
 fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2) !void {
-    const top_mod = self.topMod();
+    const top_mod = self.topModPtr();
     const snapped_mouse = try self.snapMouse(gpa, mouse);
 
     switch (self.mouse_action) {
@@ -1522,7 +1531,7 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2) !void 
             switch (hover) {
                 .none => {},
                 .top_input_btn => |input_key| {
-                    const input = self.top_inst.inputs.get(input_key).?.*;
+                    const input = self.top_inst.inputs.get(input_key).?;
                     const new_values = try gpa.alloc(bool, input.len);
                     defer gpa.free(new_values);
 
@@ -1584,7 +1593,7 @@ fn getHoverInfo(self: Self, gpa: Allocator, mouse: Vector2) !HoverInfo {
     if (self.mod_settings != null or self.child_settings != null)
         return .none;
 
-    const top_mod = self.topMod();
+    const top_mod = self.topModPtr();
 
     var input_iter = top_mod.inputs.constIterator();
     while (input_iter.nextKey()) |input_key| {
@@ -1688,6 +1697,29 @@ fn getHoverInfo(self: Self, gpa: Allocator, mouse: Vector2) !HoverInfo {
                     };
                 }
             },
+            .join => |join| {
+                for (0..join.inputs.len) |input_idx| {
+                    const input_pos = joinInputPos(join, child.pos, input_idx);
+                    if (mouse.distance(input_pos) <= port_radius) {
+                        return .{
+                            .child_input = .{
+                                .child_key = entry.key,
+                                .input = .{ .join = input_idx },
+                            },
+                        };
+                    }
+                }
+
+                const output_pos = joinOutputPos(join, child.pos);
+                if (mouse.distance(output_pos) <= port_radius) {
+                    return .{
+                        .child_output = .{
+                            .child_key = entry.key,
+                            .output = .join,
+                        },
+                    };
+                }
+            },
             .clock => |clock| {
                 const output_pos = try clockOutputPos(gpa, clock, child.pos);
                 if (mouse.distance(output_pos) <= port_radius) {
@@ -1700,7 +1732,7 @@ fn getHoverInfo(self: Self, gpa: Allocator, mouse: Vector2) !HoverInfo {
                 }
             },
             .custom => |mod_key| {
-                const child_mod = globals.modules.get(mod_key).?.*;
+                const child_mod = globals.modules.get(mod_key).?;
 
                 input_iter = child_mod.inputs.constIterator();
                 while (input_iter.nextKey()) |input_key| {
@@ -1800,6 +1832,18 @@ fn splitOutputPos(gpa: Allocator, split: Module.Split, base_pos: Vector2) !Vecto
     return re.rectAnchor(bounds, .right, .center);
 }
 
+fn joinInputPos(join: Module.Join, base_pos: Vector2, input: usize) Vector2 {
+    const bounds = joinBounds(join, base_pos);
+    const y_offset = math.interpolate(join.inputs.len, input, bounds.height + (2 * port_radius));
+
+    return .init(base_pos.x, base_pos.y - port_radius + y_offset);
+}
+
+fn joinOutputPos(join: Module.Join, base_pos: Vector2) Vector2 {
+    const bounds = joinBounds(join, base_pos);
+    return re.rectAnchor(bounds, .right, .center);
+}
+
 fn clockOutputPos(gpa: Allocator, clock: Module.Clock, base_pos: Vector2) !Vector2 {
     const bounds = try clockBounds(gpa, clock, base_pos);
     return .init(base_pos.x + bounds.width, base_pos.y + (bounds.height / 2));
@@ -1834,7 +1878,7 @@ fn customModuleOutputPos(module: CustomModule, base_pos: Vector2, output_key: Cu
 }
 
 fn topInputBtnPos(self: Self, input_key: CustomModule.PortKey) Vector2 {
-    const top_mod = self.topMod();
+    const top_mod = self.topModPtr();
     const input = top_mod.inputs.get(input_key).?;
 
     return .init(
@@ -1852,7 +1896,7 @@ fn topInputPosPin(self: Self, input_key: CustomModule.PortKey) Vector2 {
 }
 
 fn topOutputPosBtn(self: Self, output_key: CustomModule.PortKey) Vector2 {
-    const top_mod = self.topMod();
+    const top_mod = self.topModPtr();
     const output = top_mod.outputs.get(output_key).?;
 
     return .init(
@@ -1874,13 +1918,14 @@ fn wireSrcPos(self: Self, gpa: Allocator, src: WireSrc) !Vector2 {
     switch (src) {
         .top_input => |input_key| return self.topInputPosPin(input_key),
         .child_output => |ref| {
-            const child = self.topMod().children.get(ref.child_key).?;
+            const child = self.topModPtr().children.get(ref.child_key).?;
             return switch (child.mod) {
                 .logic_gate => |gate| logicGateOutputPos(gate, child.pos),
                 .not_gate => notGateOutputPos(child.pos),
                 .split => |split| try splitOutputPos(gpa, split, child.pos),
+                .join => |join| joinOutputPos(join, child.pos),
                 .clock => |clock| try clockOutputPos(gpa, clock, child.pos),
-                .custom => |key| customModuleOutputPos(globals.modules.get(key).?.*, child.pos, ref.output.custom),
+                .custom => |key| customModuleOutputPos(globals.modules.get(key).?, child.pos, ref.output.custom),
             };
         },
     }
@@ -1890,7 +1935,7 @@ fn wireDestPos(self: Self, gpa: Allocator, dest: WireDest) !Vector2 {
     switch (dest) {
         .top_output => |output_key| return self.topOutputPinPos(output_key),
         .child_input => |ref| {
-            const child = self.topMod().children.get(ref.child_key).?;
+            const child = self.topModPtr().children.get(ref.child_key).?;
             return switch (child.mod) {
                 .logic_gate => |gate| if (gate.single_wire) blk: {
                     assert(ref.input.logic_gate == null);
@@ -1898,9 +1943,10 @@ fn wireDestPos(self: Self, gpa: Allocator, dest: WireDest) !Vector2 {
                 } else logicGateInputPos(gate, child.pos, ref.input.logic_gate.?),
                 .not_gate => notGateInputPos(child.pos),
                 .split => |split| try splitInputPos(gpa, split, child.pos),
+                .join => |join| joinInputPos(join, child.pos, ref.input.join),
                 .clock => unreachable,
                 .custom => |mod_key| blk: {
-                    const child_mod = globals.modules.get(mod_key).?.*;
+                    const child_mod = globals.modules.get(mod_key).?;
                     break :blk customModuleInputPos(child_mod, child.pos, ref.input.custom);
                 },
             };
@@ -1912,6 +1958,6 @@ fn logicColor(values: []const bool) Color {
     return if (std.mem.allEqual(bool, values, false)) theme.logic_off else theme.logic_on;
 }
 
-fn topMod(self: Self) *CustomModule {
-    return globals.modules.get(self.top_inst.mod_key).?;
+fn topModPtr(self: Self) *CustomModule {
+    return globals.modules.getPtr(self.top_inst.mod_key).?;
 }

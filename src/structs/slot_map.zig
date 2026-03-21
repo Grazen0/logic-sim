@@ -185,9 +185,14 @@ pub fn SlotMap(comptime T: type) type {
             return self.getSlot(key) != null;
         }
 
-        pub fn get(self: Self, key: Key) ?*T {
+        pub fn getPtr(self: *const Self, key: Key) ?*T {
             const slot = self.getSlot(key) orelse return null;
             return &slot.contents.data;
+        }
+
+        pub fn get(self: Self, key: Key) ?T {
+            const slot = self.getSlot(key) orelse return null;
+            return slot.contents.data;
         }
 
         pub fn remove(self: *Self, key: Key) ?T {
@@ -247,9 +252,9 @@ test "SlotMap operations" {
     try testing.expect(map.hasKey(bar));
     try testing.expect(map.hasKey(baz));
 
-    try testing.expectEqualStrings(map.get(foo).?.*, "foo");
-    try testing.expectEqualStrings(map.get(bar).?.*, "bar");
-    try testing.expectEqualStrings(map.get(baz).?.*, "baz");
+    try testing.expectEqualStrings(map.getPtr(foo).?.*, "foo");
+    try testing.expectEqualStrings(map.getPtr(bar).?.*, "bar");
+    try testing.expectEqualStrings(map.getPtr(baz).?.*, "baz");
 
     try testing.expectEqualStrings(map.remove(bar).?, "bar");
 
@@ -258,9 +263,9 @@ test "SlotMap operations" {
     try testing.expect(!map.hasKey(bar));
     try testing.expect(map.hasKey(baz));
 
-    try testing.expectEqualStrings(map.get(foo).?.*, "foo");
-    try testing.expectEqual(null, map.get(bar));
-    try testing.expectEqualStrings(map.get(baz).?.*, "baz");
+    try testing.expectEqualStrings(map.getPtr(foo).?.*, "foo");
+    try testing.expectEqual(null, map.getPtr(bar));
+    try testing.expectEqualStrings(map.getPtr(baz).?.*, "baz");
 
     try testing.expectEqualStrings(map.remove(foo).?, "foo");
 
@@ -269,9 +274,9 @@ test "SlotMap operations" {
     try testing.expect(!map.hasKey(bar));
     try testing.expect(map.hasKey(baz));
 
-    try testing.expectEqual(null, map.get(foo));
-    try testing.expectEqual(null, map.get(bar));
-    try testing.expectEqualStrings(map.get(baz).?.*, "baz");
+    try testing.expectEqual(null, map.getPtr(foo));
+    try testing.expectEqual(null, map.getPtr(bar));
+    try testing.expectEqualStrings(map.getPtr(baz).?.*, "baz");
 
     const lorem = try map.put(gpa, "lorem");
 
@@ -281,10 +286,10 @@ test "SlotMap operations" {
     try testing.expect(map.hasKey(baz));
     try testing.expect(map.hasKey(lorem));
 
-    try testing.expectEqual(null, map.get(foo));
-    try testing.expectEqual(null, map.get(bar));
-    try testing.expectEqualStrings(map.get(baz).?.*, "baz");
-    try testing.expectEqualStrings(map.get(lorem).?.*, "lorem");
+    try testing.expectEqual(null, map.getPtr(foo));
+    try testing.expectEqual(null, map.getPtr(bar));
+    try testing.expectEqualStrings(map.getPtr(baz).?.*, "baz");
+    try testing.expectEqualStrings(map.getPtr(lorem).?.*, "lorem");
 
     try testing.expectEqualStrings(map.remove(baz).?, "baz");
 
@@ -294,10 +299,10 @@ test "SlotMap operations" {
     try testing.expect(!map.hasKey(baz));
     try testing.expect(map.hasKey(lorem));
 
-    try testing.expectEqual(null, map.get(foo));
-    try testing.expectEqual(null, map.get(bar));
-    try testing.expectEqual(null, map.get(baz));
-    try testing.expectEqualStrings(map.get(lorem).?.*, "lorem");
+    try testing.expectEqual(null, map.getPtr(foo));
+    try testing.expectEqual(null, map.getPtr(bar));
+    try testing.expectEqual(null, map.getPtr(baz));
+    try testing.expectEqualStrings(map.getPtr(lorem).?.*, "lorem");
 
     const ipsum = try map.put(gpa, "ipsum");
 
@@ -308,11 +313,11 @@ test "SlotMap operations" {
     try testing.expect(map.hasKey(lorem));
     try testing.expect(map.hasKey(ipsum));
 
-    try testing.expectEqual(null, map.get(foo));
-    try testing.expectEqual(null, map.get(bar));
-    try testing.expectEqual(null, map.get(baz));
-    try testing.expectEqualStrings(map.get(lorem).?.*, "lorem");
-    try testing.expectEqualStrings(map.get(ipsum).?.*, "ipsum");
+    try testing.expectEqual(null, map.getPtr(foo));
+    try testing.expectEqual(null, map.getPtr(bar));
+    try testing.expectEqual(null, map.getPtr(baz));
+    try testing.expectEqualStrings(map.getPtr(lorem).?.*, "lorem");
+    try testing.expectEqualStrings(map.getPtr(ipsum).?.*, "ipsum");
 }
 
 pub fn SecondaryMap(comptime K: type, comptime T: type) type {
@@ -431,13 +436,17 @@ pub fn SecondaryMap(comptime K: type, comptime T: type) type {
             }
         }
 
-        pub fn get(self: Self, key: K) ?*T {
-            if (key.index >= self.slots.items.len)
-                return null;
-
+        pub fn getPtr(self: *const Self, key: K) ?*T {
             return switch (self.slots.items[key.index]) {
                 .vacant => null,
                 .occupied => |*slot| if (key.gen == slot.gen) &slot.data else null,
+            };
+        }
+
+        pub fn get(self: Self, key: K) ?T {
+            return switch (self.slots.items[key.index]) {
+                .vacant => null,
+                .occupied => |slot| if (key.gen == slot.gen) slot.data else null,
             };
         }
 
