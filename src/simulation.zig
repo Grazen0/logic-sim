@@ -264,7 +264,7 @@ pub const ModuleInstance = union(enum) {
         }
     };
 
-    const Split = struct {
+    const Slice = struct {
         const Event = struct {
             in: []bool,
             time: u64,
@@ -279,9 +279,9 @@ pub const ModuleInstance = union(enum) {
         out: []bool,
         output_from: usize,
 
-        pub fn init(gpa: Allocator, split: Module.Split) !@This() {
-            const in = try gpa.alloc(bool, split.input_width);
-            const out = try gpa.alloc(bool, split.outputWidth());
+        pub fn init(gpa: Allocator, slice: Module.Slice) !@This() {
+            const in = try gpa.alloc(bool, slice.input_width);
+            const out = try gpa.alloc(bool, slice.outputWidth());
 
             @memset(in, false);
             @memset(out, false);
@@ -290,7 +290,7 @@ pub const ModuleInstance = union(enum) {
                 .in_queue = .empty,
                 .in = in,
                 .out = out,
-                .output_from = split.output_from,
+                .output_from = slice.output_from,
             };
         }
 
@@ -330,7 +330,7 @@ pub const ModuleInstance = union(enum) {
             @memcpy(self.out, self.in[self.output_from..(self.outputTo() + 1)]);
 
             return try gpa.dupe(AffectedOutput, &.{.{
-                .output = .split,
+                .output = .slice,
                 .values = try gpa.dupe(bool, self.out),
                 .time = event.time,
             }});
@@ -517,7 +517,7 @@ pub const ModuleInstance = union(enum) {
 
     logic_gate: LogicGate,
     not_gate: NotGate,
-    split: Split,
+    slice: Slice,
     join: Join,
     display: Display,
     clock: Clock,
@@ -527,7 +527,7 @@ pub const ModuleInstance = union(enum) {
         return switch (module) {
             .logic_gate => |gate| .{ .logic_gate = try .init(gpa, gate, time) },
             .not_gate => .{ .not_gate = .init(time) },
-            .split => |split| .{ .split = try .init(gpa, split) },
+            .slice => |slice| .{ .slice = try .init(gpa, slice) },
             .join => |join| .{ .join = try .init(gpa, join) },
             .display => |display| .{ .display = try .init(gpa, display) },
             .clock => |clock| .{ .clock = .init(clock, time) },
@@ -539,7 +539,7 @@ pub const ModuleInstance = union(enum) {
         switch (self.*) {
             .logic_gate => |*gate| gate.deinit(gpa),
             .not_gate => |*gate| gate.deinit(gpa),
-            .split => |*split| split.deinit(gpa),
+            .slice => |*slice| slice.deinit(gpa),
             .join => |*join| join.deinit(gpa),
             .display => |*display| display.deinit(gpa),
             .clock => {},
@@ -551,7 +551,7 @@ pub const ModuleInstance = union(enum) {
         return switch (self.*) {
             .logic_gate => |*gate| @ptrCast(&gate.output),
             .not_gate => |*gate| @ptrCast(&gate.out),
-            .split => |*split| split.out,
+            .slice => |*slice| slice.out,
             .join => |*join| join.output,
             .display => unreachable,
             .clock => |*clock| @ptrCast(&clock.out),
@@ -563,7 +563,7 @@ pub const ModuleInstance = union(enum) {
         return switch (self.*) {
             .logic_gate => |*gate| gate.nextEventTime(),
             .not_gate => |*gate| gate.nextEventTime(),
-            .split => |*split| split.nextEventTime(),
+            .slice => |*slice| slice.nextEventTime(),
             .join => |*join| join.nextEventTime(),
             .display => |*display| display.nextEventTime(),
             .clock => |*clock| clock.nextEventTime(),
@@ -575,7 +575,7 @@ pub const ModuleInstance = union(enum) {
         return switch (self.*) {
             .logic_gate => |*gate| try gate.processEvent(gpa),
             .not_gate => |*gate| try gate.processEvent(gpa),
-            .split => |*split| try split.processEvent(gpa),
+            .slice => |*slice| try slice.processEvent(gpa),
             .join => |*join| try join.processEvent(gpa),
             .display => |*display| try display.processEvent(gpa),
             .clock => |*clock| try clock.processEvent(gpa),
@@ -587,7 +587,7 @@ pub const ModuleInstance = union(enum) {
         switch (self.*) {
             .logic_gate => |*gate| try gate.writeInput(gpa, ref.logic_gate, values, time),
             .not_gate => |*gate| try gate.writeInput(gpa, values, time),
-            .split => |*split| try split.writeInput(gpa, values, time),
+            .slice => |*slice| try slice.writeInput(gpa, values, time),
             .join => |*join| try join.writeInput(gpa, ref.join, values, time),
             .display => |*display| try display.writeInput(gpa, values, time),
             .clock => unreachable,

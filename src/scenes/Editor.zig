@@ -382,7 +382,7 @@ fn drawChildSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.Settings
 
     switch (settings.*) {
         .logic_gate => |*s| try self.drawLogicGateSettingsMenu(gpa, s),
-        .split => |*s| try self.drawSplitSettingsMenu(gpa, s),
+        .slice => |*s| try self.drawSliceSettingsMenu(gpa, s),
         .join => |*s| try self.drawJoinSettingsMenu(gpa, s),
         .display => |*s| try self.drawDisplaySettingsMenu(gpa, s),
         .clock => |*s| try self.drawClockSettingsMenu(gpa, s),
@@ -442,10 +442,10 @@ fn drawLogicGateSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.Logi
         try self.closeChildSettings(gpa, true);
 }
 
-fn drawSplitSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.SplitSettings) !void {
+fn drawSliceSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.SliceSettings) !void {
     const win_rect = re.rectWithCenter(consts.screen_size.scale(0.5), .init(400, 220));
 
-    if (rg.windowBox(win_rect, "Split settings") == 1) {
+    if (rg.windowBox(win_rect, "Slice settings") == 1) {
         try self.closeChildSettings(gpa, false);
         return;
     }
@@ -1056,7 +1056,7 @@ fn closeChildSettings(self: *Self, gpa: Allocator, save: bool) !void {
 
         switch (settings.v) {
             .logic_gate => saveLogicGateSettings(&child.mod.logic_gate, settings.v.logic_gate),
-            .split => saveSplitSettings(&child.mod.split, settings.v.split),
+            .slice => saveSliceSettings(&child.mod.slice, settings.v.slice),
             .join => try saveJoinSettings(gpa, &child.mod.join, settings.v.join),
             .display => saveDisplaySettings(&child.mod.display, settings.v.display),
             .clock => saveClockSettings(&child.mod.clock, settings.v.clock),
@@ -1074,10 +1074,10 @@ fn saveLogicGateSettings(gate: *Module.LogicGate, new: Module.LogicGateSettings)
     gate.input_cnt = new.input_cnt;
 }
 
-fn saveSplitSettings(split: *Module.Split, new: Module.SplitSettings) void {
-    split.input_width = new.input_width;
-    split.output_from = new.output_from;
-    split.output_to = new.output_to;
+fn saveSliceSettings(slice: *Module.Slice, new: Module.SliceSettings) void {
+    slice.input_width = new.input_width;
+    slice.output_from = new.output_from;
+    slice.output_to = new.output_to;
 }
 
 fn saveJoinSettings(gpa: Allocator, join: *Module.Join, new: Module.JoinSettings) !void {
@@ -1181,8 +1181,8 @@ fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
     if (bottomButton("not", &btn_pos))
         try self.addChild(gpa, .not_gate);
 
-    if (bottomButton("split", &btn_pos))
-        try self.addChild(gpa, .{ .split = .init(4, 0, 1) });
+    if (bottomButton("slice", &btn_pos))
+        try self.addChild(gpa, .{ .slice = .init(4, 0, 1) });
 
     if (bottomButton("join", &btn_pos))
         try self.addChild(gpa, .{ .join = try .init(gpa, &.{ 2, 2 }) });
@@ -1354,8 +1354,8 @@ fn notGateBounds(pos: Vector2) Rectangle {
     return moduleRectangle(pos, "not", 1);
 }
 
-fn splitBounds(gpa: Allocator, split: Module.Split, pos: Vector2) !Rectangle {
-    const range_str = try split.allocFmtRange(gpa);
+fn sliceBounds(gpa: Allocator, slice: Module.Slice, pos: Vector2) !Rectangle {
+    const range_str = try slice.allocFmtRange(gpa);
     defer gpa.free(range_str);
 
     return moduleRectangle(pos, range_str, 1);
@@ -1399,7 +1399,7 @@ fn childBounds(gpa: Allocator, child: Child) !Rectangle {
     return switch (child.mod) {
         .logic_gate => |gate| logicGateBounds(child.pos, gate),
         .not_gate => notGateBounds(child.pos),
-        .split => |split| try splitBounds(gpa, split, child.pos),
+        .slice => |slice| try sliceBounds(gpa, slice, child.pos),
         .join => |join| joinBounds(join, child.pos),
         .display => |display| displayBounds(display, child.pos),
         .clock => |clock| try clockBounds(gpa, clock, child.pos),
@@ -1471,23 +1471,23 @@ fn drawPort(gpa: Allocator, pos: Vector2, hover: bool, width: usize) !void {
     }
 }
 
-fn drawSplit(gpa: Allocator, split: Module.Split, pos: Vector2, hovered_input: bool, hovered_output: bool, selected: bool) !void {
+fn drawSlice(gpa: Allocator, slice: Module.Slice, pos: Vector2, hovered_input: bool, hovered_output: bool, selected: bool) !void {
     const font = rl.getFontDefault() catch unreachable;
-    const bounds = try splitBounds(gpa, split, pos);
+    const bounds = try sliceBounds(gpa, slice, pos);
     const bounds_center = re.rectCenter(bounds);
 
     if (selected)
         rl.drawRectangleRec(re.rectPad(bounds, selection_pad, selection_pad), theme.selection_border);
 
-    rl.drawRectangleRec(bounds, theme.split);
+    rl.drawRectangleRec(bounds, theme.slice);
 
-    const range_str = try split.allocFmtRange(gpa);
+    const range_str = try slice.allocFmtRange(gpa);
     defer gpa.free(range_str);
 
     re.drawTextAligned(font, range_str, bounds_center, consts.font_size, consts.font_spacing, theme.text, .center, .center);
 
-    try drawPort(gpa, try splitInputPos(gpa, split, pos), hovered_input, split.input_width);
-    try drawPort(gpa, try splitOutputPos(gpa, split, pos), hovered_output, split.outputWidth());
+    try drawPort(gpa, try sliceInputPos(gpa, slice, pos), hovered_input, slice.input_width);
+    try drawPort(gpa, try sliceOutputPos(gpa, slice, pos), hovered_output, slice.outputWidth());
 }
 
 fn drawJoin(gpa: Allocator, join: Module.Join, pos: Vector2, hovered_input: bool, hovered_output: bool, hover: HoverInfo, selected: bool) !void {
@@ -1667,7 +1667,7 @@ fn drawChild(self: *Self, gpa: Allocator, child_key: Child.Key, hover: HoverInfo
     switch (child.mod) {
         .logic_gate => |gate| try drawLogicGate(gpa, gate, child.pos, hovered_input, hovered_output, hover, selected),
         .not_gate => drawNotGate(child.pos, hovered_input, hovered_output, selected),
-        .split => |split| try drawSplit(gpa, split, child.pos, hovered_input, hovered_output, selected),
+        .slice => |slice| try drawSlice(gpa, slice, child.pos, hovered_input, hovered_output, selected),
         .join => |join| try drawJoin(gpa, join, child.pos, hovered_input, hovered_output, hover, selected),
         .display => |display| try drawDisplay(gpa, display, child_inst.display, child.pos, hovered_input, selected),
         .clock => |clock| try drawClock(gpa, clock, child.pos, hovered_output, selected),
@@ -1894,15 +1894,15 @@ fn getHoverInfo(self: Self, gpa: Allocator, mouse: Vector2) !HoverInfo {
                     };
                 }
             },
-            .split => |split| {
-                const input_pos = try splitInputPos(gpa, split, child.pos);
-                const output_pos = try splitOutputPos(gpa, split, child.pos);
+            .slice => |slice| {
+                const input_pos = try sliceInputPos(gpa, slice, child.pos);
+                const output_pos = try sliceOutputPos(gpa, slice, child.pos);
 
                 if (mouse.distance(input_pos) <= port_radius) {
                     return .{
                         .child_input = .{
                             .child_key = entry.key,
-                            .input = .split,
+                            .input = .slice,
                         },
                     };
                 }
@@ -1911,7 +1911,7 @@ fn getHoverInfo(self: Self, gpa: Allocator, mouse: Vector2) !HoverInfo {
                     return .{
                         .child_output = .{
                             .child_key = entry.key,
-                            .output = .split,
+                            .output = .slice,
                         },
                     };
                 }
@@ -2052,13 +2052,13 @@ fn notGateOutputPos(base_pos: Vector2) Vector2 {
     return re.rectAnchor(bounds, .right, .center);
 }
 
-fn splitInputPos(gpa: Allocator, split: Module.Split, base_pos: Vector2) !Vector2 {
-    const bounds = try splitBounds(gpa, split, base_pos);
+fn sliceInputPos(gpa: Allocator, slice: Module.Slice, base_pos: Vector2) !Vector2 {
+    const bounds = try sliceBounds(gpa, slice, base_pos);
     return re.rectAnchor(bounds, .left, .center);
 }
 
-fn splitOutputPos(gpa: Allocator, split: Module.Split, base_pos: Vector2) !Vector2 {
-    const bounds = try splitBounds(gpa, split, base_pos);
+fn sliceOutputPos(gpa: Allocator, slice: Module.Slice, base_pos: Vector2) !Vector2 {
+    const bounds = try sliceBounds(gpa, slice, base_pos);
     return re.rectAnchor(bounds, .right, .center);
 }
 
@@ -2157,7 +2157,7 @@ fn wireSrcPos(self: Self, gpa: Allocator, src: WireSrc) !Vector2 {
             return switch (child.mod) {
                 .logic_gate => |gate| logicGateOutputPos(gate, child.pos),
                 .not_gate => notGateOutputPos(child.pos),
-                .split => |split| try splitOutputPos(gpa, split, child.pos),
+                .slice => |slice| try sliceOutputPos(gpa, slice, child.pos),
                 .join => |join| joinOutputPos(join, child.pos),
                 .display => unreachable,
                 .clock => |clock| try clockOutputPos(gpa, clock, child.pos),
@@ -2178,7 +2178,7 @@ fn wireDestPos(self: Self, gpa: Allocator, dest: WireDest) !Vector2 {
                     break :blk logicGateInputSingleWirePos(gate, child.pos);
                 } else logicGateInputPos(gate, child.pos, ref.input.logic_gate.?),
                 .not_gate => notGateInputPos(child.pos),
-                .split => |split| try splitInputPos(gpa, split, child.pos),
+                .slice => |slice| try sliceInputPos(gpa, slice, child.pos),
                 .join => |join| joinInputPos(join, child.pos, ref.input.join),
                 .display => |display| displayInputPos(display, child.pos),
                 .clock => unreachable,

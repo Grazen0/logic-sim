@@ -20,7 +20,7 @@ pub const ModuleJson = union(enum) {
 
     logic_gate: Module.LogicGate,
     not_gate,
-    split: Module.Split,
+    slice: Module.Slice,
     join: Module.Join,
     clock: Module.Clock,
     display: Module.Display,
@@ -55,7 +55,7 @@ const CustomModuleJson = struct {
             output: union(enum) {
                 logic_gate,
                 not_gate,
-                split,
+                slice,
                 join,
                 clock,
                 custom: usize,
@@ -70,7 +70,7 @@ const CustomModuleJson = struct {
             input: union(enum) {
                 logic_gate: ?usize,
                 not_gate,
-                split,
+                slice,
                 join: usize,
                 display,
                 custom: usize,
@@ -229,7 +229,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
                 .mod = switch (child.mod) {
                     .logic_gate => |gate| .{ .logic_gate = gate },
                     .not_gate => .not_gate,
-                    .split => |split| .{ .split = split },
+                    .slice => |slice| .{ .slice = slice },
                     .join => |join| .{ .join = try join.clone(gpa) },
                     .clock => |clock| .{ .clock = clock },
                     .display => |display| .{ .display = display },
@@ -253,7 +253,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
                             .output = switch (ref.output) {
                                 .logic_gate => .logic_gate,
                                 .not_gate => .not_gate,
-                                .split => .split,
+                                .slice => .slice,
                                 .join => .join,
                                 .clock => .clock,
                                 .custom => |output_key| blk: {
@@ -273,7 +273,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
                             .input = switch (ref.input) {
                                 .logic_gate => |input_idx| .{ .logic_gate = input_idx },
                                 .not_gate => .not_gate,
-                                .split => .split,
+                                .slice => .slice,
                                 .join => |input_idx| .{ .join = input_idx },
                                 .display => .display,
                                 .custom => |input_key| blk: {
@@ -398,7 +398,7 @@ pub fn loadCustomModulesFromStr(gpa: Allocator, data_str: []const u8) !void {
                 .mod = switch (child_json.mod) {
                     .logic_gate => |gate| .{ .logic_gate = gate },
                     .not_gate => .not_gate,
-                    .split => |split| .{ .split = split },
+                    .slice => |slice| .{ .slice = slice },
                     .join => |join| .{ .join = try join.clone(gpa) },
                     .clock => |clock| .{ .clock = clock },
                     .display => |display| .{ .display = display },
@@ -421,7 +421,7 @@ pub fn loadCustomModulesFromStr(gpa: Allocator, data_str: []const u8) !void {
                             .output = switch (ref.output) {
                                 .logic_gate => .logic_gate,
                                 .not_gate => .not_gate,
-                                .split => .split,
+                                .slice => .slice,
                                 .join => .join,
                                 .clock => .clock,
                                 .custom => |output_idx| blk: {
@@ -441,7 +441,7 @@ pub fn loadCustomModulesFromStr(gpa: Allocator, data_str: []const u8) !void {
                             .input = switch (ref.input) {
                                 .logic_gate => |input_idx| .{ .logic_gate = input_idx },
                                 .not_gate => .not_gate,
-                                .split => .split,
+                                .slice => .slice,
                                 .join => |input_idx| .{ .join = input_idx },
                                 .display => .display,
                                 .custom => |input_idx| blk: {
