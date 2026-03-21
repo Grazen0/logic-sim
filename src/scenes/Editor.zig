@@ -160,7 +160,10 @@ const ModuleSettings = struct {
 ctx: *GameContext,
 prng: *DefaultPrng,
 top_inst: CustomModuleInstance,
-last_click: f64,
+last_click: struct {
+    time: f64,
+    pos: Vector2,
+},
 time: u64,
 disabled_modules: AutoHashMap(CustomModule.Key, void),
 mouse_action: union(enum) {
@@ -212,7 +215,10 @@ pub fn init(gpa: Allocator, ctx: *GameContext, mod_key: CustomModule.Key) !Self 
     return .{
         .ctx = ctx,
         .prng = prng,
-        .last_click = 0,
+        .last_click = .{
+            .time = 0,
+            .pos = .init(0, 0),
+        },
         .top_inst = try .init(gpa, mod_key, init_time),
         .time = init_time,
         .disabled_modules = disabled_modules,
@@ -266,12 +272,14 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         try self.onClick(gpa, hover, mouse);
 
         const time = rl.getTime();
-        if (time - self.last_click < consts.double_click_secs) {
+        if (time - self.last_click.time < consts.double_click_secs and self.last_click.pos.distanceSqr(mouse) < 1) {
             try self.onDoubleClick(gpa, hover);
-            self.last_click = 0;
+            self.last_click.time = 0;
         } else {
-            self.last_click = time;
+            self.last_click.time = time;
         }
+
+        self.last_click.pos = mouse;
     } else if (rl.isMouseButtonReleased(.left)) {
         try self.onUnclick(gpa);
     }
@@ -1695,6 +1703,8 @@ fn addWire(self: *Self, gpa: Allocator, wire: Wire) !void {
 
 // TODO: this sucks
 fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2) !void {
+    self.selection = .none;
+
     const top_mod = self.topModPtr();
     const snapped_mouse = try self.snapMouse(gpa, mouse);
 
