@@ -37,7 +37,6 @@ const assert = std.debug.assert;
 const comptimePrint = std.fmt.comptimePrint;
 const allocPrintSentinel = std.fmt.allocPrintSentinel;
 
-const wire_thick = 5;
 const port_radius = 12;
 const top_port_radius_btn = 20;
 const top_port_btn_pin_distance = 45;
@@ -561,7 +560,7 @@ fn drawJoinSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.JoinSetti
             _ = re.rectTakeRight(&rect, 10);
             const width_box = re.rectTakeLeft(&rect, 60);
 
-            const range_str = try allocPrintSentinel(gpa, "{d}:{d}", .{ cur_slice_from + input.width - 1, cur_slice_from }, 0);
+            const range_str = try allocPrintSentinel(gpa, "{d}:{d}", .{ cur_slice_from + @max(input.width, 1) - 1, cur_slice_from }, 0);
             defer gpa.free(range_str);
 
             re.drawTextAligned(font, range_str, re.rectAnchor(rect, .center, .center), 24, 2.4, theme.text, .center, .center);
@@ -736,7 +735,7 @@ fn drawModSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !
     const new_output_rect = re.rectTakeRight(&outputs_lbl_rect, 40);
 
     const input_cnt = settings.inputs.count();
-    const output_cnt = settings.inputs.count();
+    const output_cnt = settings.outputs.count();
 
     re.drawTextAligned(font, "Inputs:", re.rectAnchor(inputs_lbl_rect, .left, .center), 24, 2.4, theme.text, .left, .center);
     if (rg.button(new_input_rect, "+"))
@@ -1163,9 +1162,9 @@ fn drawWire(self: Self, gpa: Allocator, wire: Wire, highlight: bool) !void {
     const to_pos = try self.wireDestPos(gpa, wire.to);
 
     if (highlight)
-        drawWireLines(from_pos, to_pos, wire.points, 3 * wire_thick, theme.selection_border);
+        drawWireLines(from_pos, to_pos, wire.points, 3 * wireThick(wire_values.len), theme.selection_border);
 
-    drawWireLines(from_pos, to_pos, wire.points, wire_thick, logicColor(wire_values));
+    drawWireLines(from_pos, to_pos, wire.points, wireThick(wire_values.len), logicColor(wire_values));
 }
 
 fn drawWireLines(start: Vector2, end: Vector2, points: []Vector2, thick: f32, color: Color) void {
@@ -1230,11 +1229,12 @@ fn drawSimulation(self: *Self, gpa: Allocator, mouse: Vector2, hover: HoverInfo)
         .wire_from => |from| {
             const from_value = self.top_inst.readWireSrc(from);
             const from_pos = try self.wireSrcPos(gpa, from);
-            drawWireLines(from_pos, snapped_mouse, self.wire_points.items, wire_thick, logicColor(from_value));
+            drawWireLines(from_pos, snapped_mouse, self.wire_points.items, wireThick(from_value.len), logicColor(from_value));
         },
         .wire_to => |to| {
             const to_pos = try self.wireDestPos(gpa, to);
-            drawWireLines(to_pos, snapped_mouse, self.wire_points.items, wire_thick, logicColor(&.{false}));
+            const dest_width = self.topModPtr().wireDestWidth(to);
+            drawWireLines(to_pos, snapped_mouse, self.wire_points.items, wireThick(dest_width), logicColor(&.{false}));
         },
         else => {},
     }
@@ -2000,8 +2000,18 @@ fn wireDestPos(self: Self, gpa: Allocator, dest: WireDest) !Vector2 {
     }
 }
 
+// magic function designed in desmos
+fn wireThick(width: usize) f32 {
+    return 5 * std.math.log10(@as(f32, @floatFromInt(width + 9)));
+}
+
 fn logicColor(values: []const bool) Color {
-    return if (std.mem.allEqual(bool, values, false)) theme.logic_off else theme.logic_on;
+    const max_value = (@as(u65, 1) << @intCast(values.len)) - 1;
+    const value = math.valuesToInt(u64, values);
+
+    const fmax_value: f32 = @floatFromInt(max_value);
+    const fvalue: f32 = @floatFromInt(value);
+    return rl.colorLerp(theme.logic_off, theme.logic_on, fvalue / fmax_value);
 }
 
 fn topModPtr(self: Self) *CustomModule {

@@ -49,3 +49,14 @@ pub fn sum(comptime T: type, arr: []const T) T {
 
     return s;
 }
+
+pub fn valuesToInt(comptime T: type, values: []const bool) T {
+    var n: T = 0;
+
+    for (0.., values) |i, v| {
+        if (v)
+            n += (@as(T, 1) << @intCast(i));
+    }
+
+    return n;
+}

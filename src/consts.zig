@@ -18,7 +18,7 @@ pub const max_mod_name_size = 32;
 pub const max_input_name_size = 16;
 
 pub const min_port_width = 1;
-pub const max_port_width = 255;
+pub const max_port_width = 64;
 
 pub const screen_width = 1280;
 pub const screen_height = 720;
