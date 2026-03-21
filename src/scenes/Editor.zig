@@ -2197,12 +2197,13 @@ fn wireThick(width: usize) f32 {
 }
 
 fn logicColor(values: []const bool) Color {
-    const max_value = (@as(u65, 1) << @intCast(values.len)) - 1;
-    const value = math.valuesToInt(u64, values);
+    var sum: usize = 0;
+    for (values) |v|
+        sum += @intFromBool(v);
 
-    const fmax_value: f32 = @floatFromInt(max_value);
-    const fvalue: f32 = @floatFromInt(value);
-    return rl.colorLerp(theme.logic_off, theme.logic_on, fvalue / fmax_value);
+    const len_f32: f32 = @floatFromInt(values.len);
+    const sum_f32: f32 = @floatFromInt(sum);
+    return rl.colorLerp(theme.logic_off, theme.logic_on, sum_f32 / len_f32);
 }
 
 fn topModPtr(self: Self) *CustomModule {
