@@ -121,11 +121,37 @@ pub const Module = union(enum) {
         freq_edit: bool,
     };
 
+    pub const Display = struct {
+        pub const Mode = enum { hex, dec };
+
+        input_width: usize,
+        mode: Mode,
+
+        pub fn init(input_width: usize, mode: Mode) @This() {
+            return .{ .input_width = input_width, .mode = mode };
+        }
+
+        pub fn digitCount(self: @This()) usize {
+            return switch (self.mode) {
+                .dec => @intFromFloat(@ceil(@as(f32, @floatFromInt(self.input_width)) * std.math.log10(@as(f32, 2)))),
+                .hex => (self.input_width + 3) / 4,
+            };
+        }
+    };
+
+    pub const DisplaySettings = struct {
+        input_width: usize,
+        input_width_edit: bool,
+        mode_num: i32,
+        mode_edit: bool,
+    };
+
     pub const Settings = union(enum) {
         logic_gate: LogicGateSettings,
         split: SplitSettings,
         join: JoinSettings,
         clock: ClockSettings,
+        display: DisplaySettings,
 
         pub fn deinit(self: *@This(), gpa: Allocator) void {
             switch (self.*) {
@@ -142,6 +168,7 @@ pub const Module = union(enum) {
     split: Split,
     join: Join,
     clock: Clock,
+    display: Display,
     custom: CustomModule.Key,
 
     pub fn deinit(self: *Self, gpa: Allocator) void {
@@ -178,6 +205,7 @@ pub const Module = union(enum) {
             .not_gate => false,
             .split => true,
             .join => true,
+            .display => true,
             .clock => true,
             .custom => false,
         };
@@ -216,6 +244,14 @@ pub const Module = union(enum) {
                         .panel_view = .init(0, 0, 0, 0),
                     },
                 };
+            },
+            .display => |display| .{
+                .display = .{
+                    .input_width = display.input_width,
+                    .input_width_edit = false,
+                    .mode_num = @intFromEnum(display.mode),
+                    .mode_edit = false,
+                },
             },
             .clock => |clock| blk: {
                 var freq_text: [32:0]u8 = .{0} ** 32;
@@ -262,6 +298,7 @@ pub const CustomModule = struct {
         not_gate,
         split,
         join: usize,
+        display,
         custom: PortKey,
     };
 
@@ -278,6 +315,7 @@ pub const CustomModule = struct {
                 .not_gate => other.input == .not_gate,
                 .split => other.input == .split,
                 .join => |i| other.input == .join and other.input.join == i,
+                .display => other.input == .display,
                 .custom => |key| other.input == .custom and other.input.custom.equals(key),
             };
         }
@@ -424,6 +462,7 @@ pub const CustomModule = struct {
                     .logic_gate, .not_gate, .clock => 1,
                     .split => |split| split.outputWidth(),
                     .join => |join| join.outputWidth(),
+                    .display => unreachable,
                     .custom => |mod_key| blk: {
                         const mod = globals.modules.get(mod_key).?;
                         break :blk mod.outputs.get(ref.output.custom).?.width;
@@ -438,17 +477,18 @@ pub const CustomModule = struct {
             .top_output => |output_key| return self.outputs.get(output_key).?.width,
             .child_input => |ref| {
                 const child = self.children.get(ref.child_key).?;
-                switch (child.mod) {
-                    .logic_gate => |gate| return if (gate.single_wire) gate.input_cnt else 1,
-                    .not_gate => return 1,
-                    .split => |split| return split.input_width,
-                    .join => |join| return join.inputs[ref.input.join],
+                return switch (child.mod) {
+                    .logic_gate => |gate| if (gate.single_wire) gate.input_cnt else 1,
+                    .not_gate => 1,
+                    .split => |split| split.input_width,
+                    .join => |join| join.inputs[ref.input.join],
                     .clock => unreachable,
-                    .custom => |mod_key| {
+                    .display => |display| display.input_width,
+                    .custom => |mod_key| blk: {
                         const mod = globals.modules.get(mod_key).?;
-                        return mod.inputs.get(ref.input.custom).?.width;
+                        break :blk mod.inputs.get(ref.input.custom).?.width;
                     },
-                }
+                };
             },
         }
     }
@@ -479,6 +519,7 @@ pub const CustomModule = struct {
                     .not_gate => ref.output == .not_gate,
                     .split => ref.output == .split,
                     .join => ref.output == .join,
+                    .display => false,
                     .clock => ref.output == .clock,
                     .custom => |mod_key| blk: {
                         const mod = globals.modules.get(mod_key).?;
@@ -500,6 +541,7 @@ pub const CustomModule = struct {
                     .not_gate => ref.input == .not_gate,
                     .split => ref.input == .split,
                     .join => |join| ref.input.join < join.inputs.len,
+                    .display => ref.input == .display,
                     .clock => false,
                     .custom => |mod_key| blk: {
                         const mod = globals.modules.get(mod_key).?;

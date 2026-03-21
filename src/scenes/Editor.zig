@@ -376,6 +376,7 @@ fn drawChildSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.Settings
         .logic_gate => |*s| try self.drawLogicGateSettingsMenu(gpa, s),
         .split => |*s| try self.drawSplitSettingsMenu(gpa, s),
         .join => |*s| try self.drawJoinSettingsMenu(gpa, s),
+        .display => |*s| try self.drawDisplaySettingsMenu(gpa, s),
         .clock => |*s| try self.drawClockSettingsMenu(gpa, s),
     }
 }
@@ -429,10 +430,8 @@ fn drawLogicGateSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.Logi
 
     const save_btn_rect = re.rectTakeBottom(&cur_rect, 24);
 
-    if (rg.button(save_btn_rect, "Save")) {
+    if (rg.button(save_btn_rect, "Save"))
         try self.closeChildSettings(gpa, true);
-        return;
-    }
 }
 
 fn drawSplitSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.SplitSettings) !void {
@@ -490,10 +489,8 @@ fn drawSplitSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.SplitSet
 
     const save_btn_rect = re.rectTakeBottom(&cur_rect, 24);
 
-    if (rg.button(save_btn_rect, "Save")) {
+    if (rg.button(save_btn_rect, "Save"))
         try self.closeChildSettings(gpa, true);
-        return;
-    }
 }
 
 fn drawJoinSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.JoinSettings) !void {
@@ -584,10 +581,68 @@ fn drawJoinSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.JoinSetti
 
     const save_btn_rect = re.rectTakeBottom(&cur_rect, 24);
 
+    if (rg.button(save_btn_rect, "Save"))
+        try self.closeChildSettings(gpa, true);
+}
+
+fn joinEnumNames(comptime E: type, comptime sep: []const u8) [:0]const u8 {
+    const fields = std.meta.fields(E);
+
+    comptime var result: [:0]const u8 = "";
+
+    inline for (fields, 0..) |f, i| {
+        if (i != 0) {
+            result = std.fmt.comptimePrint("{s}{s}{s}", .{ result, sep, f.name });
+        } else {
+            result = f.name;
+        }
+    }
+
+    return result;
+}
+
+fn drawDisplaySettingsMenu(self: *Self, gpa: Allocator, settings: *Module.DisplaySettings) !void {
+    const win_rect = re.rectWithCenter(consts.screen_size.scale(0.5), .init(400, 220));
+
+    if (rg.windowBox(win_rect, "Display settings") == 1) {
+        try self.closeChildSettings(gpa, false);
+        return;
+    }
+
+    var cur_rect = win_rect;
+    _ = re.rectTakeTop(&cur_rect, 20); // window header height
+    cur_rect = re.rectPad(cur_rect, -win_pad, -win_pad);
+
+    const font = rl.getFontDefault() catch unreachable;
+
+    var input_width_rect = re.rectTakeTop(&cur_rect, 30);
+    const input_width_box = re.rectTakeRight(&input_width_rect, 80);
+    _ = re.rectTakeTop(&cur_rect, menu_element_space);
+
+    re.drawTextAligned(font, "Input width:", re.rectAnchor(input_width_rect, .left, .center), 24, 2.4, theme.text, .left, .center);
+    re.valueBoxT(usize, input_width_box, "", &settings.input_width, consts.min_port_width, consts.max_port_width, &settings.input_width_edit);
+
+    var mode_rect = re.rectTakeTop(&cur_rect, 30);
+    const mode_rect_box = re.rectTakeRight(&mode_rect, 80);
+    _ = re.rectTakeTop(&cur_rect, menu_element_space);
+
+    const mode_text = joinEnumNames(Module.Display.Mode, ";");
+
+    re.drawTextAligned(font, "Mode:", .init(mode_rect.x, mode_rect.y + (mode_rect.height / 2)), 24, 2.4, theme.text, .left, .center);
+
+    const save_btn_rect = re.rectTakeBottom(&cur_rect, 24);
+
+    if (settings.mode_edit)
+        rg.lock();
+
     if (rg.button(save_btn_rect, "Save")) {
         try self.closeChildSettings(gpa, true);
         return;
     }
+
+    rg.unlock();
+
+    re.dropdownBoxEx(mode_rect_box, mode_text, &settings.mode_num, &settings.mode_edit);
 }
 
 fn drawClockSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.ClockSettings) !void {
@@ -604,30 +659,19 @@ fn drawClockSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.ClockSet
 
     const font = rl.getFontDefault() catch unreachable;
 
-    var input_width_rect = re.rectTakeTop(&cur_rect, 30);
-    const input_width_box = re.rectTakeRight(&input_width_rect, 80);
+    var freq_rect = re.rectTakeTop(&cur_rect, 30);
+    const freq_box = re.rectTakeRight(&freq_rect, 80);
     _ = re.rectTakeTop(&cur_rect, menu_element_space);
 
-    re.drawTextAligned(
-        font,
-        "Frequency (Hz):",
-        .init(input_width_rect.x, input_width_rect.y + (input_width_rect.height / 2)),
-        24,
-        2.4,
-        theme.text,
-        .left,
-        .center,
-    );
+    re.drawTextAligned(font, "Frequency (Hz):", re.rectAnchor(freq_rect, .left, .center), 24, 2.4, theme.text, .left, .center);
+    re.valueBoxFloat(freq_box, "", &settings.freq_text, &settings.freq, &settings.freq_edit);
 
-    re.valueBoxFloat(input_width_box, "", &settings.freq_text, &settings.freq, &settings.freq_edit);
     settings.freq = std.math.clamp(settings.freq, 0.01, 1000);
 
     const save_btn_rect = re.rectTakeBottom(&cur_rect, 24);
 
-    if (rg.button(save_btn_rect, "Save")) {
+    if (rg.button(save_btn_rect, "Save"))
         try self.closeChildSettings(gpa, true);
-        return;
-    }
 }
 
 fn removeWire(self: *Self, gpa: Allocator, wire_key: CustomModule.WireKey) !void {
@@ -1006,6 +1050,7 @@ fn closeChildSettings(self: *Self, gpa: Allocator, save: bool) !void {
             .logic_gate => saveLogicGateSettings(&child.mod.logic_gate, settings.v.logic_gate),
             .split => saveSplitSettings(&child.mod.split, settings.v.split),
             .join => try saveJoinSettings(gpa, &child.mod.join, settings.v.join),
+            .display => saveDisplaySettings(&child.mod.display, settings.v.display),
             .clock => saveClockSettings(&child.mod.clock, settings.v.clock),
         }
 
@@ -1033,6 +1078,11 @@ fn saveJoinSettings(gpa: Allocator, join: *Module.Join, new: Module.JoinSettings
 
     for (0.., new.inputs.items) |i, s|
         join.inputs[i] = s.width;
+}
+
+fn saveDisplaySettings(display: *Module.Display, new: Module.DisplaySettings) void {
+    display.input_width = new.input_width;
+    display.mode = @enumFromInt(new.mode_num);
 }
 
 fn saveClockSettings(clock: *Module.Clock, new: Module.ClockSettings) void {
@@ -1129,6 +1179,9 @@ fn drawBottomPanel(self: *Self, gpa: Allocator) !void {
     if (bottomButton("join", &btn_pos))
         try self.addChild(gpa, .{ .join = try .init(gpa, &.{ 2, 2 }) });
 
+    if (bottomButton("display", &btn_pos))
+        try self.addChild(gpa, .{ .display = .init(8, .hex) });
+
     if (bottomButton("clock", &btn_pos))
         try self.addChild(gpa, .{ .clock = .init(1) });
 
@@ -1171,14 +1224,11 @@ fn drawWireLines(start: Vector2, end: Vector2, points: []Vector2, thick: f32, co
     var s = start;
 
     for (points) |p| {
-        rl.drawLineEx(s, p, thick, color);
-        rl.drawCircleV(s, thick / 2, color);
+        re.drawLineRounded(s, p, thick, color);
         s = p;
     }
 
-    rl.drawLineEx(s, end, thick, color);
-    rl.drawCircleV(s, thick / 2, color);
-    rl.drawCircleV(end, thick / 2, color);
+    re.drawLineRounded(s, end, thick, color);
 }
 
 fn drawTopInput(self: Self, gpa: Allocator, input_key: CustomModule.PortKey, hover: HoverInfo) !void {
@@ -1307,6 +1357,21 @@ fn joinBounds(join: Module.Join, pos: Vector2) Rectangle {
     return moduleRectangle(pos, "join", join.inputs.len);
 }
 
+const seg_size = 30;
+const seg_pad = 12;
+const seg_digit_space = 16;
+const seg_thick = 6;
+const seg_off = 6;
+
+fn displayBounds(display: Module.Display, pos: Vector2) Rectangle {
+    return .init(
+        pos.x,
+        pos.y,
+        (2 * seg_pad) + @as(f32, @floatFromInt(display.digitCount())) * (seg_size + seg_digit_space) - seg_digit_space,
+        2 * (seg_size + seg_pad) + 8,
+    );
+}
+
 fn clockBounds(gpa: Allocator, clock: Module.Clock, pos: Vector2) !Rectangle {
     const range_str = try clock.allocFmtFreq(gpa);
     defer gpa.free(range_str);
@@ -1328,6 +1393,7 @@ fn childBounds(gpa: Allocator, child: Child) !Rectangle {
         .not_gate => notGateBounds(child.pos),
         .split => |split| try splitBounds(gpa, split, child.pos),
         .join => |join| joinBounds(join, child.pos),
+        .display => |display| displayBounds(display, child.pos),
         .clock => |clock| try clockBounds(gpa, clock, child.pos),
         .custom => |mod_key| customModuleBounds(child.pos, globals.modules.get(mod_key).?),
     };
@@ -1435,6 +1501,101 @@ fn drawJoin(gpa: Allocator, join: Module.Join, pos: Vector2, hovered_input: bool
     try drawPort(gpa, joinOutputPos(join, pos), hovered_output, join.outputWidth());
 }
 
+//  00
+// 5  1
+//  66
+// 4  2
+//  33
+fn drawDisplayDigit(bounds: Rectangle, digit_num: usize, digit: ?u64) void {
+    const base: Vector2 = .init(
+        bounds.x + seg_pad + (@as(f32, @floatFromInt(digit_num)) * (seg_size + seg_digit_space)),
+        bounds.y + seg_pad,
+    );
+
+    const patterns = [_][7]bool{
+        .{ true, true, true, true, true, true, false }, // 0
+        .{ false, true, true, false, false, false, false }, // 1
+        .{ true, true, false, true, true, false, true }, // 2
+        .{ true, true, true, true, false, false, true }, // 3
+        .{ false, true, true, false, false, true, true }, // 4
+        .{ true, false, true, true, false, true, true }, // 5
+        .{ true, false, true, true, true, true, true }, // 6
+        .{ true, true, true, false, false, false, false }, // 7
+        .{ true, true, true, true, true, true, true }, // 8
+        .{ true, true, true, true, false, true, true }, // 9
+        .{ true, true, true, false, true, true, true }, // A
+        .{ false, false, true, true, true, true, true }, // B
+        .{ true, false, false, true, true, true, false }, // C
+        .{ false, true, true, true, true, false, true }, // D
+        .{ true, false, false, true, true, true, true }, // E
+        .{ true, false, false, false, true, true, true }, // F
+    };
+    const empty = [_]bool{ false, false, false, false, false, false, false };
+
+    const pts = [_]Vector2{
+        base,
+        .init(base.x + seg_size, base.y),
+        .init(base.x + seg_size, base.y + seg_size),
+        .init(base.x + seg_size, base.y + (2 * seg_size)),
+        .init(base.x, base.y + (2 * seg_size)),
+        .init(base.x, base.y + seg_size),
+    };
+
+    const segs = [_]struct { usize, usize }{
+        .{ 0, 1 },
+        .{ 1, 2 },
+        .{ 2, 3 },
+        .{ 3, 4 },
+        .{ 4, 5 },
+        .{ 5, 0 },
+        .{ 2, 5 },
+    };
+
+    const values = if (digit) |d| patterns[@intCast(d)] else empty;
+
+    for (0.., segs) |i, seg| {
+        var from = pts[seg[0]];
+        var to = pts[seg[1]];
+
+        from = from.moveTowards(to, seg_off);
+        to = to.moveTowards(from, seg_off);
+
+        const color = if (values[i]) theme.display_seg_on else theme.display_seg_off;
+        re.drawLineRounded(from, to, seg_thick, color);
+    }
+}
+
+fn drawDisplay(gpa: Allocator, display: Module.Display, inst: ModuleInstance.Display, pos: Vector2, hovered_input: bool, selected: bool) !void {
+    const bounds = displayBounds(display, pos);
+
+    if (selected)
+        rl.drawRectangleRec(re.rectPad(bounds, selection_pad, selection_pad), theme.selection_border);
+
+    rl.drawRectangleRec(bounds, theme.background_dark);
+
+    const base: u64 = switch (display.mode) {
+        .dec => 10,
+        .hex => 16,
+    };
+
+    const digit_count = display.digitCount();
+    const inst_value = math.valuesToInt(u64, inst.values);
+    var started = false;
+
+    for (0..digit_count) |d| {
+        const d_inv = digit_count - 1 - d;
+        const pow = try std.math.powi(u64, base, d_inv);
+        const digit = (inst_value / pow) % base;
+
+        if (digit != 0 or d == digit_count - 1)
+            started = true;
+
+        drawDisplayDigit(bounds, d, if (started) digit else null);
+    }
+
+    try drawPort(gpa, displayInputPos(display, pos), hovered_input, display.input_width);
+}
+
 fn drawClock(gpa: Allocator, clock: Module.Clock, pos: Vector2, hovered_output: bool, selected: bool) !void {
     const font = rl.getFontDefault() catch unreachable;
     const bounds = try clockBounds(gpa, clock, pos);
@@ -1487,6 +1648,7 @@ fn drawCustomModule(gpa: Allocator, mod_key: CustomModule.Key, pos: Vector2, hov
 fn drawChild(self: *Self, gpa: Allocator, child_key: Child.Key, hover: HoverInfo) !void {
     const top_mod = self.topModPtr();
     const child = top_mod.children.get(child_key).?;
+    const child_inst = self.top_inst.children.get(child_key).?;
 
     const selected = self.selection == .child and self.selection.child.equals(child_key);
 
@@ -1499,6 +1661,7 @@ fn drawChild(self: *Self, gpa: Allocator, child_key: Child.Key, hover: HoverInfo
         .not_gate => drawNotGate(child.pos, hovered_input, hovered_output, selected),
         .split => |split| try drawSplit(gpa, split, child.pos, hovered_input, hovered_output, selected),
         .join => |join| try drawJoin(gpa, join, child.pos, hovered_input, hovered_output, hover, selected),
+        .display => |display| try drawDisplay(gpa, display, child_inst.display, child.pos, hovered_input, selected),
         .clock => |clock| try drawClock(gpa, clock, child.pos, hovered_output, selected),
         .custom => |mod_key| try drawCustomModule(gpa, mod_key, child.pos, hovered_input, hovered_output, hover, selected),
     }
@@ -1766,6 +1929,17 @@ fn getHoverInfo(self: Self, gpa: Allocator, mouse: Vector2) !HoverInfo {
                     };
                 }
             },
+            .display => |display| {
+                const input_pos = displayInputPos(display, child.pos);
+                if (mouse.distance(input_pos) <= port_radius) {
+                    return .{
+                        .child_input = .{
+                            .child_key = entry.key,
+                            .input = .display,
+                        },
+                    };
+                }
+            },
             .clock => |clock| {
                 const output_pos = try clockOutputPos(gpa, clock, child.pos);
                 if (mouse.distance(output_pos) <= port_radius) {
@@ -1890,6 +2064,11 @@ fn joinOutputPos(join: Module.Join, base_pos: Vector2) Vector2 {
     return re.rectAnchor(bounds, .right, .center);
 }
 
+fn displayInputPos(display: Module.Display, base_pos: Vector2) Vector2 {
+    const bounds = displayBounds(display, base_pos);
+    return re.rectAnchor(bounds, .center, .bottom);
+}
+
 fn clockOutputPos(gpa: Allocator, clock: Module.Clock, base_pos: Vector2) !Vector2 {
     const bounds = try clockBounds(gpa, clock, base_pos);
     return .init(base_pos.x + bounds.width, base_pos.y + (bounds.height / 2));
@@ -1970,6 +2149,7 @@ fn wireSrcPos(self: Self, gpa: Allocator, src: WireSrc) !Vector2 {
                 .not_gate => notGateOutputPos(child.pos),
                 .split => |split| try splitOutputPos(gpa, split, child.pos),
                 .join => |join| joinOutputPos(join, child.pos),
+                .display => unreachable,
                 .clock => |clock| try clockOutputPos(gpa, clock, child.pos),
                 .custom => |key| customModuleOutputPos(globals.modules.get(key).?, child.pos, ref.output.custom),
             };
@@ -1990,6 +2170,7 @@ fn wireDestPos(self: Self, gpa: Allocator, dest: WireDest) !Vector2 {
                 .not_gate => notGateInputPos(child.pos),
                 .split => |split| try splitInputPos(gpa, split, child.pos),
                 .join => |join| joinInputPos(join, child.pos, ref.input.join),
+                .display => |display| displayInputPos(display, child.pos),
                 .clock => unreachable,
                 .custom => |mod_key| blk: {
                     const child_mod = globals.modules.get(mod_key).?;

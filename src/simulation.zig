@@ -419,6 +419,62 @@ pub const ModuleInstance = union(enum) {
         }
     };
 
+    pub const Display = struct {
+        const Event = struct {
+            values: []bool,
+            time: u64,
+
+            pub fn deinit(self: *@This(), gpa: Allocator) void {
+                gpa.free(self.values);
+            }
+        };
+
+        in_queue: BinaryHeap(Event, greaterByField(Event, "time")),
+        values: []bool,
+        mode: Module.Display.Mode,
+
+        pub fn init(gpa: Allocator, display: Module.Display) !@This() {
+            const values = try gpa.alloc(bool, display.input_width);
+            @memset(values, false);
+
+            return .{
+                .in_queue = .empty,
+                .values = values,
+                .mode = display.mode,
+            };
+        }
+
+        pub fn deinit(self: *@This(), gpa: Allocator) void {
+            for (self.in_queue.data.items) |*ev|
+                ev.deinit(gpa);
+
+            self.in_queue.deinit(gpa);
+            gpa.free(self.values);
+
+            self.* = undefined;
+        }
+
+        pub fn nextEventTime(self: @This()) ?u64 {
+            const next_event = self.in_queue.peek() orelse return null;
+            return next_event.time;
+        }
+
+        pub fn writeInput(self: *@This(), gpa: Allocator, values: []const bool, time: u64) !void {
+            try self.in_queue.add(gpa, .{
+                .values = try gpa.dupe(bool, values),
+                .time = time,
+            });
+        }
+
+        pub fn processEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
+            var event = self.in_queue.remove();
+            defer event.deinit(gpa);
+
+            @memcpy(self.values, event.values);
+            return &.{};
+        }
+    };
+
     const Clock = struct {
         freq: f32,
         next_time: u64,
@@ -463,6 +519,7 @@ pub const ModuleInstance = union(enum) {
     not_gate: NotGate,
     split: Split,
     join: Join,
+    display: Display,
     clock: Clock,
     custom: CustomModuleInstance,
 
@@ -472,6 +529,7 @@ pub const ModuleInstance = union(enum) {
             .not_gate => .{ .not_gate = .init(time) },
             .split => |split| .{ .split = try .init(gpa, split) },
             .join => |join| .{ .join = try .init(gpa, join) },
+            .display => |display| .{ .display = try .init(gpa, display) },
             .clock => |clock| .{ .clock = .init(clock, time) },
             .custom => |mod_key| .{ .custom = try .init(gpa, mod_key, time) },
         };
@@ -483,6 +541,7 @@ pub const ModuleInstance = union(enum) {
             .not_gate => |*gate| gate.deinit(gpa),
             .split => |*split| split.deinit(gpa),
             .join => |*join| join.deinit(gpa),
+            .display => |*display| display.deinit(gpa),
             .clock => {},
             .custom => |*custom| custom.deinit(gpa),
         }
@@ -494,6 +553,7 @@ pub const ModuleInstance = union(enum) {
             .not_gate => |*gate| @ptrCast(&gate.out),
             .split => |*split| split.out,
             .join => |*join| join.output,
+            .display => unreachable,
             .clock => |*clock| @ptrCast(&clock.out),
             .custom => |*custom| custom.outputs.get(output.custom).?,
         };
@@ -505,6 +565,7 @@ pub const ModuleInstance = union(enum) {
             .not_gate => |*gate| gate.nextEventTime(),
             .split => |*split| split.nextEventTime(),
             .join => |*join| join.nextEventTime(),
+            .display => |*display| display.nextEventTime(),
             .clock => |*clock| clock.nextEventTime(),
             .custom => |*custom| custom.nextEventTime(),
         };
@@ -516,6 +577,7 @@ pub const ModuleInstance = union(enum) {
             .not_gate => |*gate| try gate.processEvent(gpa),
             .split => |*split| try split.processEvent(gpa),
             .join => |*join| try join.processEvent(gpa),
+            .display => |*display| try display.processEvent(gpa),
             .clock => |*clock| try clock.processEvent(gpa),
             .custom => |*custom| try custom.processEvent(gpa),
         };
@@ -527,6 +589,7 @@ pub const ModuleInstance = union(enum) {
             .not_gate => |*gate| try gate.writeInput(gpa, values, time),
             .split => |*split| try split.writeInput(gpa, values, time),
             .join => |*join| try join.writeInput(gpa, ref.join, values, time),
+            .display => |*display| try display.writeInput(gpa, values, time),
             .clock => unreachable,
             .custom => |*custom| try custom.writeInput(gpa, ref.custom, values, time),
         }

@@ -135,14 +135,17 @@ pub fn valueBoxT(comptime T: type, bounds: Rectangle, text: [:0]const u8, value:
     const result = rg.valueBox(bounds, text, &value_i32, @intCast(min), @intCast(max), edit_mode.*);
     value.* = @intCast(value_i32);
 
-    if (result > 0)
+    if (result != 0)
         edit_mode.* = !edit_mode.*;
 }
 
 pub fn valueBoxFloat(bounds: Rectangle, text: [:0]const u8, text_value: [:0]u8, value: *f32, edit_mode: *bool) void {
-    const result = rg.valueBoxFloat(bounds, text, text_value, value, edit_mode.*);
+    if (rg.valueBoxFloat(bounds, text, text_value, value, edit_mode.*) != 0)
+        edit_mode.* = !edit_mode.*;
+}
 
-    if (result > 0)
+pub fn dropdownBoxEx(bounds: Rectangle, text: [:0]const u8, active: *i32, edit_mode: *bool) void {
+    if (rg.dropdownBox(bounds, text, active, edit_mode.*) != 0)
         edit_mode.* = !edit_mode.*;
 }
 
@@ -160,4 +163,10 @@ pub fn drawTooltip(text: [:0]const u8) void {
     const rect = rectFromPosSize(mouse.subtract(.init(0, size.y)), size);
     rl.drawRectangleRec(rect, theme.tooltip_bg);
     drawTextAligned(font, text, rectCenter(rect), font_size, font_size * 0.1, theme.text, .center, .center);
+}
+
+pub fn drawLineRounded(start: Vector2, end: Vector2, thick: f32, color: Color) void {
+    rl.drawLineEx(start, end, thick, color);
+    rl.drawCircleV(start, thick / 2, color);
+    rl.drawCircleV(end, thick / 2, color);
 }

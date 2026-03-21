@@ -43,6 +43,8 @@ pub const not_gate = autumn_red;
 pub const split = katana_gray;
 pub const join = katana_gray;
 pub const clock = dragon_blue;
+pub const display_seg_on = autumn_red;
+pub const display_seg_off = sumi_ink_2;
 
 pub fn loadStyle() void {
     rg.setStyle(.default, .{ .control = .border_color_normal }, sumi_ink_4.toInt());

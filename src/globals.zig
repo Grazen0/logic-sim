@@ -23,6 +23,7 @@ pub const ModuleJson = union(enum) {
     split: Module.Split,
     join: Module.Join,
     clock: Module.Clock,
+    display: Module.Display,
     custom: usize,
 
     pub fn deinit(self: *@This(), gpa: Allocator) void {
@@ -71,6 +72,7 @@ const CustomModuleJson = struct {
                 not_gate,
                 split,
                 join: usize,
+                display,
                 custom: usize,
             },
         },
@@ -230,6 +232,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
                     .split => |split| .{ .split = split },
                     .join => |join| .{ .join = try join.clone(gpa) },
                     .clock => |clock| .{ .clock = clock },
+                    .display => |display| .{ .display = display },
                     .custom => |mkey| .{ .custom = mod_idxs.getPtr(mkey).?.* },
                 },
             };
@@ -272,6 +275,7 @@ fn createModuleJsonList(gpa: Allocator) ![]CustomModuleJson {
                                 .not_gate => .not_gate,
                                 .split => .split,
                                 .join => |input_idx| .{ .join = input_idx },
+                                .display => .display,
                                 .custom => |input_key| blk: {
                                     const child_mod_key = mod.children.getPtr(ref.child_key).?.mod.custom;
                                     const child_input_idxs = input_idxs_all.getPtr(child_mod_key).?;
@@ -397,6 +401,7 @@ pub fn loadCustomModulesFromStr(gpa: Allocator, data_str: []const u8) !void {
                     .split => |split| .{ .split = split },
                     .join => |join| .{ .join = try join.clone(gpa) },
                     .clock => |clock| .{ .clock = clock },
+                    .display => |display| .{ .display = display },
                     .custom => |mod_idx| .{ .custom = mod_keys[mod_idx] },
                 },
             };
@@ -438,6 +443,7 @@ pub fn loadCustomModulesFromStr(gpa: Allocator, data_str: []const u8) !void {
                                 .not_gate => .not_gate,
                                 .split => .split,
                                 .join => |input_idx| .{ .join = input_idx },
+                                .display => .display,
                                 .custom => |input_idx| blk: {
                                     const child_mod_idx = mod_json.children[ref.child_key].mod.custom;
                                     const child_input_keys = input_keys_all[child_mod_idx];
