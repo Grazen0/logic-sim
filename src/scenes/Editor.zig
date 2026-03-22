@@ -54,7 +54,6 @@ const menu_element_space = 20;
 
 const HoverInfo = union(enum) {
     none,
-    top_input_btn: CustomModule.PortKey,
     top_input_pin: CustomModule.PortKey,
     top_output_pin: CustomModule.PortKey,
     child_input: CustomModule.ChildInputRef,
@@ -568,7 +567,7 @@ fn drawJoinSettingsMenu(self: *Self, gpa: Allocator, settings: *Module.JoinSetti
         inputs_rect_inner.x, // to prevent horizontal bar
         inputs_rect_inner.y,
         inputs_rect_inner.width,
-        @as(f32, @floatFromInt(settings.inputs.items.len)) * (item_height + item_space) - item_space,
+        @as(f32, @floatFromInt(settings.inputs.items.len)) * (item_height + item_space) + item_space,
     );
 
     _ = rg.scrollPanel(inputs_rect, null, inputs_content_rect, &settings.panel_scroll, &settings.panel_view);
@@ -757,7 +756,7 @@ fn drawModSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !
     const result = rg.windowBox(win_rect, "Module settings");
 
     if (result == 1 or rl.isKeyPressed(.enter)) {
-        try self.closeModSettings(gpa, false);
+        try self.closeModSettings(gpa, true);
         return;
     }
 
@@ -774,7 +773,27 @@ fn drawModSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !
     _ = re.rectTakeTop(&cur_rect, menu_element_space);
 
     if (rg.button(delete_rect, comptimePrint("#{d}#", .{IconName.bin}))) {
-        self.ctx.next_scene = .{ .selector = .{ .delete_mod = self.top_inst.mod_key } };
+        const mod_key = self.top_inst.mod_key;
+        var removed = globals.modules.remove(mod_key).?;
+        defer removed.deinit(gpa);
+
+        var mod_iter = globals.modules.iterator();
+
+        while (mod_iter.nextValue()) |mod| {
+            var children_iter = mod.children.iterator();
+
+            while (children_iter.next()) |entry| {
+                const child_key = entry.key;
+                const child = entry.val;
+
+                if (child.mod == .custom and child.mod.custom.equals(mod_key)) {
+                    var removed_child = mod.children.remove(child_key).?;
+                    defer removed_child.deinit(gpa);
+                }
+            }
+        }
+
+        self.ctx.next_scene = .{ .selector = .{ .delete_mod = null } };
         try globals.saveCustomModules(gpa);
     }
 
@@ -1275,29 +1294,102 @@ fn drawWireLines(start: Vector2, end: Vector2, points: []Vector2, thick: f32, co
     re.drawLineRounded(s, end, thick, color);
 }
 
-fn drawTopInput(self: Self, gpa: Allocator, input_key: CustomModule.PortKey, hover: HoverInfo) !void {
-    const input = self.topModPtr().inputs.get(input_key).?;
+fn topPortHeight(port_width: usize) f32 {
+    return 40 + (30 * std.math.sqrt(@as(f32, @floatFromInt(port_width - 1))));
+}
+
+fn drawTopInput(self: *Self, gpa: Allocator, input_key: CustomModule.PortKey, hover: HoverInfo) !void {
+    const top_mod = self.topModPtr();
+    const input = top_mod.inputs.get(input_key).?;
+
     const values = self.top_inst.inputs.get(input_key).?;
 
     const btn_pos = self.topInputBtnPos(input_key);
     const pin_pos = self.topInputPosPin(input_key);
 
+    const btn_size: Vector2 = .init(40, topPortHeight(values.len));
+    const btn_rect: Rectangle = re.rectAnchoredAt(btn_pos, btn_size, .center, .center);
+
     rl.drawLineEx(btn_pos, pin_pos, 8, theme.port);
-    rl.drawCircleV(btn_pos, top_port_radius_btn, logicColor(values));
+
+    const input_width_f: f32 = @floatFromInt(input.width);
+    const sub_btn_height = btn_rect.height / input_width_f;
+
+    for (0..input.width) |i| {
+        const i_f: f32 = @floatFromInt(i);
+        const sub_btn_rect: Rectangle = .init(
+            btn_rect.x,
+            btn_rect.y + (i_f * sub_btn_height),
+            btn_rect.width,
+            sub_btn_height,
+        );
+        if (re.drawRectangleButton(sub_btn_rect, logicColor(&.{values[i]}))) {
+            const new_values = try gpa.dupe(bool, values);
+            defer gpa.free(new_values);
+
+            new_values[i] = !new_values[i];
+            try self.top_inst.writeInput(gpa, input_key, new_values, self.time);
+        }
+
+        if (i > 0) {
+            const y = btn_rect.y + (i_f * sub_btn_height);
+
+            rl.drawLineEx(
+                .init(btn_rect.x, y),
+                .init(btn_rect.x + btn_rect.width, y),
+                3,
+                theme.background_alt,
+            );
+        }
+    }
+
+    rl.drawRectangleLinesEx(btn_rect, 3, theme.background_alt);
 
     const highlight_port = hover == .top_input_pin and hover.top_input_pin.equals(input_key);
     try drawPort(gpa, pin_pos, highlight_port, input.width);
 }
 
 fn drawTopOutput(self: Self, gpa: Allocator, output_key: CustomModule.PortKey, hover: HoverInfo) !void {
-    const output = self.topModPtr().outputs.get(output_key).?;
-    const value = self.top_inst.outputs.get(output_key).?;
+    const top_mod = self.topModPtr();
+    const output = top_mod.outputs.get(output_key).?;
+
+    const values = self.top_inst.outputs.get(output_key).?;
 
     const btn_pos = self.topOutputPosBtn(output_key);
     const pin_pos = self.topOutputPinPos(output_key);
 
+    const btn_size: Vector2 = .init(40, topPortHeight(values.len));
+    const btn_rect: Rectangle = re.rectAnchoredAt(btn_pos, btn_size, .center, .center);
+
     rl.drawLineEx(btn_pos, pin_pos, 8, theme.port);
-    rl.drawCircleV(btn_pos, top_port_radius_btn, logicColor(value));
+
+    const output_width_f: f32 = @floatFromInt(output.width);
+    const sub_btn_height = btn_rect.height / output_width_f;
+
+    for (0..output.width) |i| {
+        const i_f: f32 = @floatFromInt(i);
+        const sub_btn_rect: Rectangle = .init(
+            btn_rect.x,
+            btn_rect.y + (i_f * sub_btn_height),
+            btn_rect.width,
+            sub_btn_height,
+        );
+
+        rl.drawRectangleRec(sub_btn_rect, logicColor(&.{values[i]}));
+
+        if (i > 0) {
+            const y = btn_rect.y + (i_f * sub_btn_height);
+
+            rl.drawLineEx(
+                .init(btn_rect.x, y),
+                .init(btn_rect.x + btn_rect.width, y),
+                3,
+                theme.background_alt,
+            );
+        }
+    }
+
+    rl.drawRectangleLinesEx(btn_rect, 3, theme.background_alt);
 
     const highlight_port = hover == .top_output_pin and hover.top_output_pin.equals(output_key);
     try drawPort(gpa, pin_pos, highlight_port, output.width);
@@ -1802,16 +1894,6 @@ fn onClick(self: *Self, gpa: Allocator, hover: HoverInfo, mouse: Vector2) !void 
         .none => {
             switch (hover) {
                 .none => {},
-                .top_input_btn => |input_key| {
-                    const input = self.top_inst.inputs.get(input_key).?;
-                    const new_values = try gpa.alloc(bool, input.len);
-                    defer gpa.free(new_values);
-
-                    for (0.., input) |i, v|
-                        new_values[i] = !v;
-
-                    try self.top_inst.writeInput(gpa, input_key, new_values, self.time);
-                },
                 .top_input_pin => |input_key| {
                     self.mouse_action = .{ .wire_from = .{ .top_input = input_key } };
                     self.wire_points.clearAndFree(gpa);
@@ -1876,9 +1958,6 @@ fn getHoverInfo(self: Self, gpa: Allocator, mouse: Vector2) !HoverInfo {
 
     var input_iter = top_mod.inputs.constIterator();
     while (input_iter.nextKey()) |input_key| {
-        if (mouse.distance(self.topInputBtnPos(input_key)) <= top_port_radius_btn)
-            return .{ .top_input_btn = input_key };
-
         if (mouse.distance(self.topInputPosPin(input_key)) <= port_radius)
             return .{ .top_input_pin = input_key };
     }

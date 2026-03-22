@@ -137,7 +137,17 @@ pub const Module = union(enum) {
     };
 
     pub const Display = struct {
-        pub const Mode = enum { hex, dec };
+        pub const Mode = enum {
+            hex,
+            dec,
+
+            pub fn base(self: @This()) usize {
+                return switch (self) {
+                    .dec => 10,
+                    .hex => 16,
+                };
+            }
+        };
 
         input_width: usize,
         mode: Mode,
@@ -147,10 +157,13 @@ pub const Module = union(enum) {
         }
 
         pub fn digitCount(self: @This()) usize {
-            return switch (self.mode) {
-                .dec => @intFromFloat(@ceil(@as(f32, @floatFromInt(self.input_width)) * std.math.log10(@as(f32, 2)))),
-                .hex => (self.input_width + 3) / 4,
-            };
+            assert(self.input_width > 0);
+
+            const base = self.mode.base();
+            const ratio = std.math.log(f64, @floatFromInt(base), 2);
+            const width_f: f64 = @floatFromInt(self.input_width);
+
+            return @intFromFloat(@ceil(width_f * ratio));
         }
     };
 

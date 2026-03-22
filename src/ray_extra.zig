@@ -1,6 +1,7 @@
 const rl = @import("raylib");
 const rg = @import("raygui");
 const theme = @import("./theme.zig");
+const math = @import("./math.zig");
 
 const Color = rl.Color;
 const Font = rl.Font;
@@ -130,6 +131,22 @@ pub fn rectAnchor(rect: Rectangle, h_align: HorizontalAlignment, v_align: Vertic
     return .init(x, y);
 }
 
+pub fn rectAnchoredAt(pos: Vector2, size: Vector2, h_align: HorizontalAlignment, v_align: VerticalAlignment) Rectangle {
+    const x = switch (h_align) {
+        .left => pos.x,
+        .center => pos.x - (size.x / 2),
+        .right => pos.x - size.x,
+    };
+
+    const y = switch (v_align) {
+        .top => pos.y,
+        .center => pos.y - (size.y / 2),
+        .bottom => pos.y - size.y,
+    };
+
+    return .init(x, y, size.x, size.y);
+}
+
 pub fn valueBoxT(comptime T: type, bounds: Rectangle, text: [:0]const u8, value: *T, min: T, max: T, edit_mode: *bool) void {
     var value_i32: i32 = @intCast(value.*);
     const result = rg.valueBox(bounds, text, &value_i32, @intCast(min), @intCast(max), edit_mode.*);
@@ -169,4 +186,14 @@ pub fn drawLineRounded(start: Vector2, end: Vector2, thick: f32, color: Color) v
     rl.drawLineEx(start, end, thick, color);
     rl.drawCircleV(start, thick / 2, color);
     rl.drawCircleV(end, thick / 2, color);
+}
+
+pub fn drawRectangleButton(rec: Rectangle, color: Color) bool {
+    const mouse = rl.getMousePosition();
+    const colliding = math.checkVec2RectCollision(mouse, rec);
+
+    const final_color = if (colliding) rl.colorLerp(color, .white, 0.15) else color;
+    rl.drawRectangleRec(rec, final_color);
+
+    return colliding and rl.isMouseButtonPressed(.left);
 }

@@ -60,3 +60,7 @@ pub fn valuesToInt(comptime T: type, values: []const bool) T {
 
     return n;
 }
+
+pub fn lerp(from: f32, to: f32, ratio: f32) f32 {
+    return from + ((to - from) * ratio);
+}
