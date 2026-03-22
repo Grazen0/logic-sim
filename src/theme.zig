@@ -41,6 +41,7 @@ pub const nor_gate = oni_violet;
 pub const xor_gate = wave_blue_2;
 pub const not_gate = autumn_red;
 pub const slice = katana_gray;
+pub const split = katana_gray;
 pub const join = katana_gray;
 pub const clock = dragon_blue;
 pub const display_seg_on = autumn_red;

@@ -74,7 +74,7 @@ pub const ModuleInstance = union(enum) {
         kind: Module.LogicGate.Kind,
         inputs: []bool,
         output: bool,
-        next_out: ?u64,
+        out_time: ?u64,
 
         fn generateDelay() u64 {
             return 25 + rand.uintLessThan(u64, 10);
@@ -89,14 +89,15 @@ pub const ModuleInstance = union(enum) {
                 .kind = gate.kind,
                 .inputs = inputs,
                 .output = false,
-                .next_out = time + generateDelay(),
+                .out_time = time + generateDelay(),
             };
         }
 
         pub fn deinit(self: *@This(), gpa: Allocator) void {
-            for (self.in_queue.data.items) |*ev| ev.deinit(gpa);
-            self.in_queue.deinit(gpa);
+            for (self.in_queue.data.items) |*ev|
+                ev.deinit(gpa);
 
+            self.in_queue.deinit(gpa);
             gpa.free(self.inputs);
             self.* = undefined;
         }
@@ -120,7 +121,7 @@ pub const ModuleInstance = union(enum) {
 
         pub fn nextEventTime(self: @This()) ?u64 {
             const event_time = if (self.in_queue.peek()) |ev| ev.time else null;
-            const out_time = if (self.next_out) |t| t else null;
+            const out_time = if (self.out_time) |t| t else null;
             return if (lessThanOptional(u64, event_time, out_time)) event_time else out_time;
         }
 
@@ -136,7 +137,7 @@ pub const ModuleInstance = union(enum) {
 
         pub fn processEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
             const event_time = if (self.in_queue.peek()) |ev| ev.time else null;
-            const out_time = if (self.next_out) |t| t else null;
+            const out_time = if (self.out_time) |t| t else null;
 
             if (lessThanOptional(u64, event_time, out_time)) {
                 self.processInputEvent(gpa);
@@ -163,12 +164,12 @@ pub const ModuleInstance = union(enum) {
                 @memcpy(self.inputs, event.in.values);
             }
 
-            self.next_out = event.time + generateDelay();
+            self.out_time = event.time + generateDelay();
         }
 
         fn processOutputEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
-            const time = self.next_out orelse return &.{};
-            self.next_out = null;
+            const time = self.out_time orelse return &.{};
+            self.out_time = null;
 
             const new_output = self.computeOutput();
             if (self.output == new_output)
@@ -178,7 +179,7 @@ pub const ModuleInstance = union(enum) {
 
             return try gpa.dupe(AffectedOutput, &.{.{
                 .output = .logic_gate,
-                .values = try gpa.dupe(bool, @ptrCast(&self.output)),
+                .values = try gpa.dupe(bool, &.{self.output}),
                 .time = time,
             }});
         }
@@ -193,7 +194,7 @@ pub const ModuleInstance = union(enum) {
         in_queue: BinaryHeap(Event, greaterByField(Event, "time")),
         in: bool,
         out: bool,
-        next_out: ?u64,
+        out_time: ?u64,
 
         fn generateDelay() u64 {
             return 15 + rand.uintLessThan(u64, 10);
@@ -204,7 +205,7 @@ pub const ModuleInstance = union(enum) {
                 .in_queue = .empty,
                 .in = false,
                 .out = false,
-                .next_out = time + generateDelay(),
+                .out_time = time + generateDelay(),
             };
         }
 
@@ -220,13 +221,13 @@ pub const ModuleInstance = union(enum) {
 
         pub fn nextEventTime(self: @This()) ?u64 {
             const event_time = if (self.in_queue.peek()) |ev| ev.time else null;
-            const out_time = if (self.next_out) |t| t else null;
+            const out_time = if (self.out_time) |t| t else null;
             return if (lessThanOptional(u64, event_time, out_time)) event_time else out_time;
         }
 
         pub fn processEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
             const event_time = if (self.in_queue.peek()) |ev| ev.time else null;
-            const out_time = if (self.next_out) |t| t else null;
+            const out_time = if (self.out_time) |t| t else null;
 
             if (lessThanOptional(u64, event_time, out_time)) {
                 self.processInputEvent();
@@ -242,13 +243,12 @@ pub const ModuleInstance = union(enum) {
                 return;
 
             self.in = event.in;
-
-            self.next_out = event.time + generateDelay();
+            self.out_time = event.time + generateDelay();
         }
 
         fn processOutputEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
-            const time = self.next_out orelse return &.{};
-            self.next_out = null;
+            const time = self.out_time orelse return &.{};
+            self.out_time = null;
 
             const new_out = !self.in;
             if (self.out == new_out)
@@ -258,7 +258,7 @@ pub const ModuleInstance = union(enum) {
 
             return try gpa.dupe(AffectedOutput, &.{.{
                 .output = .not_gate,
-                .values = try gpa.dupe(bool, @ptrCast(&self.out)),
+                .values = try gpa.dupe(bool, &.{self.out}),
                 .time = time,
             }});
         }
@@ -275,21 +275,16 @@ pub const ModuleInstance = union(enum) {
         };
 
         in_queue: BinaryHeap(Event, greaterByField(Event, "time")),
-        in: []bool,
-        out: []bool,
+        values: []bool,
         output_from: usize,
 
         pub fn init(gpa: Allocator, slice: Module.Slice) !@This() {
-            const in = try gpa.alloc(bool, slice.input_width);
-            const out = try gpa.alloc(bool, slice.outputWidth());
-
-            @memset(in, false);
-            @memset(out, false);
+            const values = try gpa.alloc(bool, slice.outputWidth());
+            @memset(values, false);
 
             return .{
                 .in_queue = .empty,
-                .in = in,
-                .out = out,
+                .values = values,
                 .output_from = slice.output_from,
             };
         }
@@ -300,16 +295,17 @@ pub const ModuleInstance = union(enum) {
         }
 
         pub fn deinit(self: *@This(), gpa: Allocator) void {
-            for (self.in_queue.data.items) |*ev| ev.deinit(gpa);
-            self.in_queue.deinit(gpa);
+            for (self.in_queue.data.items) |*ev|
+                ev.deinit(gpa);
 
-            gpa.free(self.in);
-            gpa.free(self.out);
+            self.in_queue.deinit(gpa);
+            gpa.free(self.values);
+
             self.* = undefined;
         }
 
         pub fn outputTo(self: @This()) usize {
-            return self.output_from + self.out.len - 1;
+            return self.output_from + self.values.len - 1;
         }
 
         pub fn writeInput(self: *@This(), gpa: Allocator, values: []const bool, time: u64) !void {
@@ -323,17 +319,89 @@ pub const ModuleInstance = union(enum) {
             var event = self.in_queue.removeOrNull() orelse return &.{};
             defer event.deinit(gpa);
 
-            if (self.in.len != event.in.len or std.mem.eql(bool, self.in, event.in))
+            const from = self.output_from;
+            const to = self.outputTo() + 1;
+
+            if (event.in.len < to or std.mem.eql(bool, self.values, event.in[from..to]))
                 return &.{};
 
-            @memcpy(self.in, event.in);
-            @memcpy(self.out, self.in[self.output_from..(self.outputTo() + 1)]);
+            @memcpy(self.values, event.in[from..to]);
 
             return try gpa.dupe(AffectedOutput, &.{.{
                 .output = .slice,
-                .values = try gpa.dupe(bool, self.out),
+                .values = try gpa.dupe(bool, self.values),
                 .time = event.time,
             }});
+        }
+    };
+
+    const Split = struct {
+        const Event = struct {
+            values: []bool,
+            time: u64,
+
+            pub fn deinit(self: *@This(), gpa: Allocator) void {
+                gpa.free(self.values);
+            }
+        };
+
+        in_queue: BinaryHeap(Event, greaterByField(Event, "time")),
+        values: []bool,
+
+        pub fn init(gpa: Allocator, split: Module.Split) !@This() {
+            const values = try gpa.alloc(bool, split.input_width);
+            @memset(values, false);
+
+            return .{
+                .in_queue = .empty,
+                .values = values,
+            };
+        }
+
+        pub fn deinit(self: *@This(), gpa: Allocator) void {
+            for (self.in_queue.data.items) |*ev|
+                ev.deinit(gpa);
+
+            self.in_queue.deinit(gpa);
+
+            gpa.free(self.values);
+            self.* = undefined;
+        }
+
+        pub fn nextEventTime(self: @This()) ?u64 {
+            const next_event = self.in_queue.peek() orelse return null;
+            return next_event.time;
+        }
+
+        pub fn writeInput(self: *@This(), gpa: Allocator, values: []const bool, time: u64) !void {
+            try self.in_queue.add(gpa, .{
+                .values = try gpa.dupe(bool, values),
+                .time = time,
+            });
+        }
+
+        pub fn processEvent(self: *@This(), gpa: Allocator) ![]AffectedOutput {
+            var event = self.in_queue.removeOrNull() orelse return &.{};
+            defer event.deinit(gpa);
+
+            if (event.values.len != self.values.len)
+                return &.{};
+
+            var affected: ArrayList(AffectedOutput) = .empty;
+
+            for (0..self.values.len) |i| {
+                if (self.values[i] != event.values[i]) {
+                    self.values[i] = event.values[i];
+
+                    try affected.append(gpa, .{
+                        .output = .{ .split = i },
+                        .values = try gpa.dupe(bool, &.{self.values[i]}),
+                        .time = event.time,
+                    });
+                }
+            }
+
+            return try affected.toOwnedSlice(gpa);
         }
     };
 
@@ -349,36 +417,27 @@ pub const ModuleInstance = union(enum) {
         };
 
         in_queue: BinaryHeap(Event, greaterByField(Event, "time")),
-        inputs: [][]bool,
-        output: []bool,
+        inputs: []usize,
+        values: []bool,
 
         pub fn init(gpa: Allocator, join: Module.Join) !@This() {
-            const inputs = try gpa.alloc([]bool, join.inputs.len);
-
-            for (0..inputs.len) |i| {
-                inputs[i] = try gpa.alloc(bool, join.inputs[i]);
-                @memset(inputs[i], false);
-            }
-
-            const output = try gpa.alloc(bool, join.outputWidth());
-            @memset(output, false);
+            const values = try gpa.alloc(bool, join.outputWidth());
+            @memset(values, false);
 
             return .{
                 .in_queue = .empty,
-                .inputs = inputs,
-                .output = output,
+                .inputs = try gpa.dupe(usize, join.inputs),
+                .values = values,
             };
         }
 
         pub fn deinit(self: *@This(), gpa: Allocator) void {
-            for (self.in_queue.data.items) |*ev| ev.deinit(gpa);
+            for (self.in_queue.data.items) |*ev|
+                ev.deinit(gpa);
+
             self.in_queue.deinit(gpa);
-
-            for (self.inputs) |input|
-                gpa.free(input);
-
             gpa.free(self.inputs);
-            gpa.free(self.output);
+            gpa.free(self.values);
             self.* = undefined;
         }
 
@@ -399,21 +458,21 @@ pub const ModuleInstance = union(enum) {
             var event = self.in_queue.removeOrNull() orelse return &.{};
             defer event.deinit(gpa);
 
-            const input = self.inputs[event.input_idx];
+            var from: usize = 0;
+            for (0..event.input_idx) |i|
+                from += self.inputs[i];
 
-            if (input.len != event.values.len or std.mem.eql(bool, input, event.values))
+            const input_len = self.inputs[event.input_idx];
+            const to = from + input_len;
+
+            if (input_len != event.values.len or std.mem.eql(bool, self.values[from..to], event.values))
                 return &.{};
 
-            var start: usize = 0;
-            for (0..event.input_idx) |i|
-                start += self.inputs[i].len;
-
-            @memcpy(input, event.values);
-            @memcpy(self.output[start .. start + input.len], input);
+            @memcpy(self.values[from..to], event.values);
 
             return try gpa.dupe(AffectedOutput, &.{.{
                 .output = .join,
-                .values = try gpa.dupe(bool, self.output),
+                .values = try gpa.dupe(bool, self.values),
                 .time = event.time,
             }});
         }
@@ -518,6 +577,7 @@ pub const ModuleInstance = union(enum) {
     logic_gate: LogicGate,
     not_gate: NotGate,
     slice: Slice,
+    split: Split,
     join: Join,
     display: Display,
     clock: Clock,
@@ -528,6 +588,7 @@ pub const ModuleInstance = union(enum) {
             .logic_gate => |gate| .{ .logic_gate = try .init(gpa, gate, time) },
             .not_gate => .{ .not_gate = .init(time) },
             .slice => |slice| .{ .slice = try .init(gpa, slice) },
+            .split => |split| .{ .split = try .init(gpa, split) },
             .join => |join| .{ .join = try .init(gpa, join) },
             .display => |display| .{ .display = try .init(gpa, display) },
             .clock => |clock| .{ .clock = .init(clock, time) },
@@ -540,6 +601,7 @@ pub const ModuleInstance = union(enum) {
             .logic_gate => |*gate| gate.deinit(gpa),
             .not_gate => |*gate| gate.deinit(gpa),
             .slice => |*slice| slice.deinit(gpa),
+            .split => |*split| split.deinit(gpa),
             .join => |*join| join.deinit(gpa),
             .display => |*display| display.deinit(gpa),
             .clock => {},
@@ -551,8 +613,9 @@ pub const ModuleInstance = union(enum) {
         return switch (self.*) {
             .logic_gate => |*gate| @ptrCast(&gate.output),
             .not_gate => |*gate| @ptrCast(&gate.out),
-            .slice => |*slice| slice.out,
-            .join => |*join| join.output,
+            .slice => |*slice| slice.values,
+            .split => |*split| @ptrCast(&split.values[output.split]),
+            .join => |*join| join.values,
             .display => unreachable,
             .clock => |*clock| @ptrCast(&clock.out),
             .custom => |*custom| custom.outputs.get(output.custom).?,
@@ -564,6 +627,7 @@ pub const ModuleInstance = union(enum) {
             .logic_gate => |*gate| gate.nextEventTime(),
             .not_gate => |*gate| gate.nextEventTime(),
             .slice => |*slice| slice.nextEventTime(),
+            .split => |*split| split.nextEventTime(),
             .join => |*join| join.nextEventTime(),
             .display => |*display| display.nextEventTime(),
             .clock => |*clock| clock.nextEventTime(),
@@ -576,6 +640,7 @@ pub const ModuleInstance = union(enum) {
             .logic_gate => |*gate| try gate.processEvent(gpa),
             .not_gate => |*gate| try gate.processEvent(gpa),
             .slice => |*slice| try slice.processEvent(gpa),
+            .split => |*split| try split.processEvent(gpa),
             .join => |*join| try join.processEvent(gpa),
             .display => |*display| try display.processEvent(gpa),
             .clock => |*clock| try clock.processEvent(gpa),
@@ -588,6 +653,7 @@ pub const ModuleInstance = union(enum) {
             .logic_gate => |*gate| try gate.writeInput(gpa, ref.logic_gate, values, time),
             .not_gate => |*gate| try gate.writeInput(gpa, values, time),
             .slice => |*slice| try slice.writeInput(gpa, values, time),
+            .split => |*split| try split.writeInput(gpa, values, time),
             .join => |*join| try join.writeInput(gpa, ref.join, values, time),
             .display => |*display| try display.writeInput(gpa, values, time),
             .clock => unreachable,
@@ -650,6 +716,16 @@ pub const CustomModuleInstance = struct {
 
             self.* = undefined;
         }
+
+        fn greaterThan(self: @This(), other: @This()) bool {
+            if (self.time != other.time)
+                return self.time > other.time;
+
+            // Prioritize top events over child events
+            // NOTE: this fixes weird behavior after processChildEvent (see
+            // custom 32-adder module)
+            return self.v == .child and other.v == .top;
+        }
     };
 
     mod_key: CustomModule.Key,
@@ -657,7 +733,7 @@ pub const CustomModuleInstance = struct {
     outputs: SecondaryMap(PortKey, []bool),
     children: SecondaryMap(CustomModule.Child.Key, ModuleInstance),
     child_gens: SecondaryMap(CustomModule.Child.Key, u64),
-    queue: BinaryHeap(Event, greaterByField(Event, "time")),
+    queue: BinaryHeap(Event, Event.greaterThan),
 
     pub fn init(gpa: Allocator, mod_key: CustomModule.Key, time: u64) !Self {
         const mod = globals.modules.get(mod_key).?;
@@ -741,16 +817,16 @@ pub const CustomModuleInstance = struct {
 
     pub fn processEvent(self: *Self, gpa: Allocator) ![]AffectedOutput {
         self.pruneQueue();
-        var event = self.queue.remove();
+        var event = self.queue.removeOrNull() orelse return &.{};
         defer event.deinit(gpa);
 
-        switch (event.v) {
-            .top => |top_event| return try self.processTopEvent(gpa, top_event, event.time),
-            .child => |child_event| {
+        return switch (event.v) {
+            .top => |top_event| try self.processTopEvent(gpa, top_event, event.time),
+            .child => |child_event| blk: {
                 try self.processChildEvent(gpa, child_event);
-                return &.{};
+                break :blk &.{};
             },
-        }
+        };
     }
 
     fn processTopEvent(self: *Self, gpa: Allocator, event: Event.Top, time: u64) ![]AffectedOutput {
@@ -786,6 +862,8 @@ pub const CustomModuleInstance = struct {
         defer gpa.free(child_affected);
         defer for (child_affected) |*af| af.deinit(gpa);
 
+        try self.updateChildEvent(gpa, event.child_key);
+
         for (child_affected) |af| {
             const src: WireSrc = .{
                 .child_output = .{
@@ -795,11 +873,15 @@ pub const CustomModuleInstance = struct {
             };
             try self.queue.add(gpa, .top(src, try gpa.dupe(bool, af.values), af.time));
         }
+    }
 
-        if (child.nextEventTime()) |t| {
-            const gen = self.child_gens.get(event.child_key).?;
-            try self.queue.add(gpa, .child(event.child_key, gen, t));
-        }
+    fn updateChildEvent(self: *Self, gpa: Allocator, child_key: CustomModule.Child.Key) !void {
+        const child = self.children.getPtr(child_key).?;
+        const gen = self.child_gens.getPtr(child_key).?;
+        gen.* += 1;
+
+        if (child.nextEventTime()) |t|
+            try self.queue.add(gpa, .child(child_key, gen.*, t));
     }
 
     pub fn writeInput(self: *Self, gpa: Allocator, input_key: PortKey, values: []const bool, time: u64) !void {
@@ -820,27 +902,21 @@ pub const CustomModuleInstance = struct {
         switch (dest) {
             .top_output => |output_key| {
                 const output = self.outputs.get(output_key).?;
-                if (std.mem.eql(bool, output, values))
+                if (output.len != values.len or std.mem.eql(bool, output, values))
                     return null;
 
                 @memcpy(output, values);
 
                 return .{
                     .output = .{ .custom = output_key },
-                    .time = time,
                     .values = try gpa.dupe(bool, output),
+                    .time = time,
                 };
             },
             .child_input => |ref| {
                 const child_inst = self.children.getPtr(ref.child_key).?;
                 try child_inst.writeInput(gpa, ref.input, values, time);
-
-                const gen = self.child_gens.getPtr(ref.child_key).?;
-                gen.* += 1;
-
-                if (child_inst.nextEventTime()) |t|
-                    try self.queue.add(gpa, .child(ref.child_key, gen.*, t));
-
+                try self.updateChildEvent(gpa, ref.child_key);
                 return null;
             },
         }

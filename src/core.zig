@@ -38,6 +38,21 @@ pub const Module = union(enum) {
         single_wire: bool,
     };
 
+    pub const SplitSettings = struct {
+        input_width: usize,
+        input_width_edit: bool,
+    };
+
+    pub const Split = struct {
+        input_width: usize,
+
+        pub fn init(input_width: usize) @This() {
+            return .{
+                .input_width = input_width,
+            };
+        }
+    };
+
     pub const SliceSettings = struct {
         input_width: usize,
         input_width_edit: bool,
@@ -149,6 +164,7 @@ pub const Module = union(enum) {
     pub const Settings = union(enum) {
         logic_gate: LogicGateSettings,
         slice: SliceSettings,
+        split: SplitSettings,
         join: JoinSettings,
         clock: ClockSettings,
         display: DisplaySettings,
@@ -166,6 +182,7 @@ pub const Module = union(enum) {
     logic_gate: LogicGate,
     not_gate,
     slice: Slice,
+    split: Split,
     join: Join,
     clock: Clock,
     display: Display,
@@ -204,6 +221,7 @@ pub const Module = union(enum) {
             .logic_gate => true,
             .not_gate => false,
             .slice => true,
+            .split => true,
             .join => true,
             .display => true,
             .clock => true,
@@ -231,6 +249,10 @@ pub const Module = union(enum) {
                     .output_to_edit = false,
                 },
             },
+            .split => |split| .{ .split = .{
+                .input_width = split.input_width,
+                .input_width_edit = false,
+            } },
             .join => |join| blk: {
                 var inputs: ArrayList(JoinSettings.Input) = try .initCapacity(gpa, join.inputs.len);
 
@@ -297,6 +319,7 @@ pub const CustomModule = struct {
         logic_gate: ?usize,
         not_gate,
         slice,
+        split,
         join: usize,
         display,
         custom: PortKey,
@@ -311,10 +334,11 @@ pub const CustomModule = struct {
                 return false;
 
             return switch (self.input) {
-                .logic_gate => |i| other.input == .logic_gate and other.input.logic_gate == i,
+                .logic_gate => |idx| other.input == .logic_gate and other.input.logic_gate == idx,
                 .not_gate => other.input == .not_gate,
                 .slice => other.input == .slice,
-                .join => |i| other.input == .join and other.input.join == i,
+                .split => other.input == .split,
+                .join => |idx| other.input == .join and other.input.join == idx,
                 .display => other.input == .display,
                 .custom => |key| other.input == .custom and other.input.custom.equals(key),
             };
@@ -325,6 +349,7 @@ pub const CustomModule = struct {
         logic_gate,
         not_gate,
         slice,
+        split: usize,
         join,
         clock,
         custom: PortKey,
@@ -342,6 +367,7 @@ pub const CustomModule = struct {
                 .logic_gate => other.output == .logic_gate,
                 .not_gate => other.output == .not_gate,
                 .slice => other.output == .slice,
+                .split => |idx| other.output.split == idx,
                 .join => other.output == .join,
                 .clock => other.output == .clock,
                 .custom => |key| other.output == .custom and other.output.custom.equals(key),
@@ -459,10 +485,13 @@ pub const CustomModule = struct {
             .child_output => |ref| {
                 const child = self.children.get(ref.child_key).?;
                 return switch (child.mod) {
-                    .logic_gate, .not_gate, .clock => 1,
+                    .logic_gate => 1,
+                    .not_gate => 1,
                     .slice => |slice| slice.outputWidth(),
+                    .split => 1,
                     .join => |join| join.outputWidth(),
                     .display => unreachable,
+                    .clock => 1,
                     .custom => |mod_key| blk: {
                         const mod = globals.modules.get(mod_key).?;
                         break :blk mod.outputs.get(ref.output.custom).?.width;
@@ -481,6 +510,7 @@ pub const CustomModule = struct {
                     .logic_gate => |gate| if (gate.single_wire) gate.input_cnt else 1,
                     .not_gate => 1,
                     .slice => |slice| slice.input_width,
+                    .split => |split| split.input_width,
                     .join => |join| join.inputs[ref.input.join],
                     .clock => unreachable,
                     .display => |display| display.input_width,
@@ -518,6 +548,7 @@ pub const CustomModule = struct {
                     .logic_gate => ref.output == .logic_gate,
                     .not_gate => ref.output == .not_gate,
                     .slice => ref.output == .slice,
+                    .split => |split| ref.output.split < split.input_width,
                     .join => ref.output == .join,
                     .display => false,
                     .clock => ref.output == .clock,
@@ -540,6 +571,7 @@ pub const CustomModule = struct {
                     .logic_gate => |gate| if (gate.single_wire) ref.input.logic_gate == null else ref.input.logic_gate.? < gate.input_cnt,
                     .not_gate => ref.input == .not_gate,
                     .slice => ref.input == .slice,
+                    .split => ref.input == .split,
                     .join => |join| ref.input.join < join.inputs.len,
                     .display => ref.input == .display,
                     .clock => false,
