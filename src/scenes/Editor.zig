@@ -365,9 +365,7 @@ fn simulateDelta(self: *Self, gpa: Allocator, delta: f32) !void {
             break;
 
         const affected = try self.top_inst.processEvent(gpa);
-
         defer gpa.free(affected);
-        defer for (affected) |*af| af.deinit(gpa);
     }
 }
 
@@ -716,8 +714,7 @@ fn removeWire(self: *Self, gpa: Allocator, wire_key: CustomModule.WireKey) !void
 
     try globals.saveCustomModules(gpa);
 
-    var affected = try self.top_inst.removeWire(gpa, removed_wire, self.time);
-    defer if (affected) |*af| af.deinit(gpa);
+    _ = try self.top_inst.removeWire(gpa, removed_wire, self.time);
 }
 
 fn removeChild(self: *Self, gpa: Allocator, child_key: Child.Key) !void {
@@ -1323,9 +1320,9 @@ fn drawTopInput(self: *Self, gpa: Allocator, input_key: CustomModule.PortKey, ho
             btn_rect.width,
             sub_btn_height,
         );
+
         if (re.drawRectangleButton(sub_btn_rect, logicColor(&.{values[i]}))) {
             const new_values = try gpa.dupe(bool, values);
-            defer gpa.free(new_values);
 
             new_values[i] = !new_values[i];
             try self.top_inst.writeInput(gpa, input_key, new_values, self.time);

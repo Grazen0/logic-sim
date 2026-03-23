@@ -67,8 +67,8 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
     if (self.new_mod_dialog)
         rg.lock();
 
-    const left_nav_pos: Rectangle = .init(10, (consts.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
-    const right_nav_pos: Rectangle = .init(consts.screen_width - nav_btn_size.x - 10, (consts.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
+    const left_nav_pos: Rectangle = .init(20, (consts.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
+    const right_nav_pos: Rectangle = .init(consts.screen_width - nav_btn_size.x - 20, (consts.screen_height / 2) - (nav_btn_size.y / 2), nav_btn_size.x, nav_btn_size.y);
 
     if (self.page > 0 and rg.button(left_nav_pos, comptimePrint("#{d}#", .{IconName.arrow_left_fill})))
         self.page -= 1;
