@@ -79,14 +79,7 @@ pub fn main() anyerror!void {
             cur_scene.deinit(alloc);
 
             cur_scene = switch (next_scene) {
-                .selector => |info| blk: {
-                    if (info.delete_mod) |mod_key| {
-                        var removed_mod = globals.modules.remove(mod_key).?;
-                        removed_mod.deinit(alloc);
-                    }
-
-                    break :blk .{ .selector = try .init(alloc, &ctx) };
-                },
+                .selector => .{ .selector = try .init(alloc, &ctx) },
                 .editor => |mod_key| .{ .editor = try .init(alloc, &ctx, mod_key) },
             };
         }

@@ -297,7 +297,7 @@ pub fn frame(self: *Self, gpa: Allocator) !void {
         } else if (self.selection != .none) {
             self.selection = .none;
         } else {
-            self.ctx.next_scene = .{ .selector = .{ .delete_mod = null } };
+            self.ctx.next_scene = .selector;
             return;
         }
     }
@@ -790,7 +790,7 @@ fn drawModSettingsMenu(self: *Self, gpa: Allocator, settings: *ModuleSettings) !
             }
         }
 
-        self.ctx.next_scene = .{ .selector = .{ .delete_mod = null } };
+        self.ctx.next_scene = .selector;
         try globals.saveCustomModules(gpa);
     }
 
@@ -1150,7 +1150,7 @@ fn drawTopBar(self: *Self, gpa: Allocator) !void {
     const top_mod = self.topModPtr();
 
     if (rg.button(.init(15, 10, 40, 40), comptimePrint("#{d}#", .{IconName.arrow_left})))
-        self.ctx.next_scene = .{ .selector = .{ .delete_mod = null } };
+        self.ctx.next_scene = .selector;
 
     if (rg.button(.init(65, 10, 40, 40), comptimePrint("#{d}#", .{IconName.tools})))
         try self.openModSettings(gpa);
