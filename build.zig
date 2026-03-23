@@ -72,6 +72,7 @@ pub fn build(b: *std.Build) !void {
         const exe = b.addExecutable(.{
             .name = "logic-sim",
             .root_module = exe_mod,
+            .use_lld = false,
         });
         b.installArtifact(exe);
 
